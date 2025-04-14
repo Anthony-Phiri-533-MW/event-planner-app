@@ -2,3 +2,9 @@
 Lib
 Scripts
 Include
+
+db.py
+appp.py
+mainn.py
+
+*.db
