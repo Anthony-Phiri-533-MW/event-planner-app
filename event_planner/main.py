@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QStackedWidget
 from views.calendar_view import CalendarView
 from views.events_view import EventsView
 
-from core.theme_manager import apply_theme
+from core.theme_manager import ThemeManager
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -21,7 +21,11 @@ class MainWindow(QMainWindow):
         # Placeholder for events screen (created later when needed)
         self.events_view = None
 
-        apply_theme(self, theme_name="light")  # Default theme
+        self.theme_manager = ThemeManager()
+        self.theme_manager.set_theme("Light")   # Set default theme
+        self.theme_manager.apply_theme(self)    # Apply theme to MainWindow (self)
+
+        # apply_theme(self, theme_name="light")  # Default theme
 
     def navigate_to_events(self, selected_date: str):
         self.events_view = EventsView(selected_date, self.navigate_back_to_calendar)
