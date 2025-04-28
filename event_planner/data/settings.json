@@ -1,0 +1,5 @@
+{
+    "theme": "light",
+    "backup_frequency": "daily",
+    "api_url": "https://your-backup-api.com/endpoint"
+}
