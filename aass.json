@@ -1,0 +1,47 @@
+{
+    "events": [
+        {
+            "id": 1,
+            "name": "Sports",
+            "date": "2025-05-08",
+            "time": "19:00",
+            "venue": "DMI Mangochi",
+            "description": "Inte batch competition",
+            "is_archived": false
+        }
+    ],
+    "archived_events": [],
+    "tasks": [],
+    "guests": [
+        {
+            "id": 1,
+            "event_id": 1,
+            "name": "ddfdfssdaasd",
+            "email": "sadasd"
+        },
+        {
+            "id": 2,
+            "event_id": 1,
+            "name": "fgdgdf",
+            "email": "fgggff"
+        },
+        {
+            "id": 3,
+            "event_id": 1,
+            "name": "fgdfdd",
+            "email": "vbvnlb"
+        },
+        {
+            "id": 4,
+            "event_id": 1,
+            "name": "2ewewds",
+            "email": "hkhkkh"
+        },
+        {
+            "id": 5,
+            "event_id": 1,
+            "name": "tererw",
+            "email": "ewfvflb"
+        }
+    ]
+}

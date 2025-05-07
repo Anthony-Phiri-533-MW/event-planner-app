@@ -1,10 +1,12 @@
 import sqlite3
+import csv
+import json
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QLabel,
     QPushButton, QTextEdit, QListWidgetItem, QLineEdit, QFormLayout, QDialog,
     QDialogButtonBox, QCalendarWidget, QDateEdit, QMessageBox, QTextBrowser,
     QStatusBar, QMenu, QAction, QTimeEdit, QTableWidget, QTableWidgetItem,
-    QHeaderView, QCheckBox, QStyledItemDelegate
+    QHeaderView, QCheckBox, QStyledItemDelegate, QScrollArea, QFileDialog
 )
 from PyQt5.QtCore import Qt, QDate, QTime
 from PyQt5.QtGui import QTextCharFormat, QColor, QFont
@@ -35,6 +37,12 @@ class EventDatabase:
 
     def create_tables(self):
         with self.conn:
+            # Drop old tables if they exist
+            self.conn.execute('DROP TABLE IF EXISTS events')
+            self.conn.execute('DROP TABLE IF EXISTS archived_events')
+            self.conn.execute('DROP TABLE IF EXISTS tasks')
+            self.conn.execute('DROP TABLE IF EXISTS guests')
+            
             # Events table
             self.conn.execute('''
                 CREATE TABLE IF NOT EXISTS events (
@@ -211,6 +219,90 @@ class EventDatabase:
             self.delete_event(event_id)
             return True
 
+    def export_to_csv(self, filename):
+        with self.conn:
+            # Export events
+            events = self.conn.execute('SELECT * FROM events').fetchall()
+            with open(f'{filename}_events.csv', 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['ID', 'Name', 'Date', 'Time', 'Venue', 'Description', 'Is Archived'])
+                writer.writerows(events)
+            
+            # Export archived events
+            archived = self.conn.execute('SELECT * FROM archived_events').fetchall()
+            with open(f'{filename}_archived.csv', 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['ID', 'Name', 'Date', 'Time', 'Venue', 'Description', 'Archived Date'])
+                writer.writerows(archived)
+            
+            # Export tasks
+            tasks = self.conn.execute('SELECT * FROM tasks').fetchall()
+            with open(f'{filename}_tasks.csv', 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['ID', 'Event ID', 'Description', 'Is Completed'])
+                writer.writerows(tasks)
+            
+            # Export guests
+            guests = self.conn.execute('SELECT * FROM guests').fetchall()
+            with open(f'{filename}_guests.csv', 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['ID', 'Event ID', 'Name', 'Email'])
+                writer.writerows(guests)
+
+    def export_to_json(self, filename):
+        data = {
+            'events': [],
+            'archived_events': [],
+            'tasks': [],
+            'guests': []
+        }
+        
+        with self.conn:
+            # Get events data
+            for row in self.conn.execute('SELECT * FROM events'):
+                data['events'].append({
+                    'id': row[0],
+                    'name': row[1],
+                    'date': row[2],
+                    'time': row[3],
+                    'venue': row[4],
+                    'description': row[5],
+                    'is_archived': bool(row[6])
+                })
+            
+            # Get archived events
+            for row in self.conn.execute('SELECT * FROM archived_events'):
+                data['archived_events'].append({
+                    'id': row[0],
+                    'name': row[1],
+                    'date': row[2],
+                    'time': row[3],
+                    'venue': row[4],
+                    'description': row[5],
+                    'archived_date': row[6]
+                })
+            
+            # Get tasks
+            for row in self.conn.execute('SELECT * FROM tasks'):
+                data['tasks'].append({
+                    'id': row[0],
+                    'event_id': row[1],
+                    'description': row[2],
+                    'is_completed': bool(row[3])
+                })
+            
+            # Get guests
+            for row in self.conn.execute('SELECT * FROM guests'):
+                data['guests'].append({
+                    'id': row[0],
+                    'event_id': row[1],
+                    'name': row[2],
+                    'email': row[3]
+                })
+        
+        with open(f'{filename}.json', 'w') as f:
+            json.dump(data, f, indent=4)
+
 class TaskDialog(QDialog):
     def __init__(self, parent=None, task_data=None):
         super().__init__(parent)
@@ -335,6 +427,9 @@ class EventPlannerApp(QWidget):
 
         main_layout = QHBoxLayout(self)
         self.setMinimumSize(1200, 800)
+        
+        # Enable maximize button
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
 
         # Left sidebar
         self.sidebar = QVBoxLayout()
@@ -370,6 +465,12 @@ class EventPlannerApp(QWidget):
         self.edit_event_btn.clicked.connect(self.edit_event)
         self.delete_event_btn = QPushButton("Delete Selected Event")
         self.delete_event_btn.clicked.connect(self.delete_event)
+        
+        # Export buttons
+        self.export_csv_btn = QPushButton("Export to CSV")
+        self.export_csv_btn.clicked.connect(self.export_to_csv)
+        self.export_json_btn = QPushButton("Export to JSON")
+        self.export_json_btn.clicked.connect(self.export_to_json)
         
         # Guest management buttons
         self.guest_buttons_layout = QHBoxLayout()
@@ -414,6 +515,8 @@ class EventPlannerApp(QWidget):
         button_layout.addLayout(self.task_buttons_layout)
         button_layout.addWidget(self.archive_btn)
         button_layout.addWidget(self.view_toggle)
+        button_layout.addWidget(self.export_csv_btn)
+        button_layout.addWidget(self.export_json_btn)
         button_layout.addStretch()
 
         self.sidebar.addWidget(self.search_input)
@@ -424,15 +527,23 @@ class EventPlannerApp(QWidget):
         # Right panel
         right_panel = QVBoxLayout()
         
-        # Event list
-        self.event_list = QListWidget()
-        self.event_list.itemSelectionChanged.connect(self.on_event_selection_changed)
+        # Event table
+        self.events_label = QLabel("Events")
+        self.events_table = QTableWidget()
+        self.events_table.setColumnCount(6)
+        self.events_table.setHorizontalHeaderLabels(["ID", "Name", "Date", "Time", "Venue", "Description"])
+        self.events_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.events_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.events_table.itemSelectionChanged.connect(self.on_event_selection_changed)
         
         # Details panel
         self.details_panel = QTextBrowser()
         self.details_panel.setOpenExternalLinks(True)
         
-        # Guests table
+        # Create scroll areas for guests and tasks
+        scroll = QVBoxLayout()
+        
+        # Guests table in scroll area
         self.guests_label = QLabel("Guests")
         self.guests_table = QTableWidget()
         self.guests_table.setColumnCount(3)
@@ -442,7 +553,11 @@ class EventPlannerApp(QWidget):
         self.guests_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.guests_table.itemSelectionChanged.connect(self.on_guest_selection_changed)
         
-        # Tasks table
+        guests_scroll = QScrollArea()
+        guests_scroll.setWidgetResizable(True)
+        guests_scroll.setWidget(self.guests_table)
+        
+        # Tasks table in scroll area
         self.tasks_label = QLabel("Tasks")
         self.tasks_table = QTableWidget()
         self.tasks_table.setColumnCount(3)
@@ -453,18 +568,23 @@ class EventPlannerApp(QWidget):
         self.tasks_table.itemChanged.connect(self.on_task_status_changed)
         self.tasks_table.itemSelectionChanged.connect(self.on_task_selection_changed)
         
+        tasks_scroll = QScrollArea()
+        tasks_scroll.setWidgetResizable(True)
+        tasks_scroll.setWidget(self.tasks_table)
+        
         # Status bar
         self.status_bar = QStatusBar()
         self.status_bar.setFont(QFont("Arial", 9))
         
-        right_panel.addWidget(QLabel("Events"))
-        right_panel.addWidget(self.event_list)
+        # Add widgets to right panel
+        right_panel.addWidget(self.events_label)
+        right_panel.addWidget(self.events_table)
         right_panel.addWidget(QLabel("Details"))
         right_panel.addWidget(self.details_panel)
         right_panel.addWidget(self.guests_label)
-        right_panel.addWidget(self.guests_table)
+        right_panel.addWidget(guests_scroll)
         right_panel.addWidget(self.tasks_label)
-        right_panel.addWidget(self.tasks_table)
+        right_panel.addWidget(tasks_scroll)
         right_panel.addWidget(self.status_bar)
 
         main_layout.addLayout(self.sidebar, 1)
@@ -492,12 +612,10 @@ class EventPlannerApp(QWidget):
 
     def on_event_selection_changed(self):
         """Handle event selection changes"""
-        has_selection = bool(self.event_list.currentItem())
+        has_selection = bool(self.events_table.currentItem())
         self.toggle_event_buttons(has_selection)
         if has_selection:
-            self.display_event_details(self.event_list.currentItem())
-            self.load_guests()
-            self.load_tasks()
+            self.display_event_details()
 
     def on_guest_selection_changed(self):
         """Handle guest selection changes"""
@@ -529,21 +647,21 @@ class EventPlannerApp(QWidget):
                                          data['description'])
                 self.status_bar.showMessage("Event added successfully", 3000)
                 self.load_events()
-                # Select the newly added event
-                for i in range(self.event_list.count()):
-                    item = self.event_list.item(i)
-                    if item.data(Qt.UserRole)[0] == event_id:
-                        self.event_list.setCurrentItem(item)
-                        break
             except sqlite3.Error as e:
                 QMessageBox.critical(self, "Database Error", str(e))
 
     def edit_event(self):
         """Open dialog to edit selected event"""
-        if not self.event_list.currentItem():
+        if not self.events_table.currentItem():
             return
             
-        event = self.event_list.currentItem().data(Qt.UserRole)
+        current_row = self.events_table.currentRow()
+        event_id = int(self.events_table.item(current_row, 0).text())
+        event = self.db.get_event_by_id(event_id)
+        
+        if not event:
+            return
+            
         event_data = {
             'id': event[0],
             'name': event[1],
@@ -561,34 +679,29 @@ class EventPlannerApp(QWidget):
                                    data['time'], data['venue'], data['description'])
                 self.status_bar.showMessage("Event updated successfully", 3000)
                 self.load_events()
-                # Keep the edited event selected
-                for i in range(self.event_list.count()):
-                    item = self.event_list.item(i)
-                    if item.data(Qt.UserRole)[0] == event[0]:
-                        self.event_list.setCurrentItem(item)
-                        break
             except sqlite3.Error as e:
                 QMessageBox.critical(self, "Database Error", str(e))
 
     def delete_event(self):
-        if not self.event_list.currentItem():
+        if not self.events_table.currentItem():
             return
             
-        event = self.event_list.currentItem().data(Qt.UserRole)
+        current_row = self.events_table.currentRow()
+        event_id = int(self.events_table.item(current_row, 0).text())
+        event_name = self.events_table.item(current_row, 1).text()
+        
         reply = QMessageBox.question(
             self, 'Delete Event', 
-            f"Are you sure you want to delete '{event[1]}' and all its tasks/guests?",
+            f"Are you sure you want to delete '{event_name}' and all its tasks/guests?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
         
         if reply == QMessageBox.Yes:
             try:
-                self.db.delete_event(event[0])
+                self.db.delete_event(event_id)
                 self.status_bar.showMessage("Event deleted successfully", 3000)
                 self.load_events()
-                self.details_panel.clear()
-                self.guests_table.setRowCount(0)
-                self.tasks_table.setRowCount(0)
+                self.clear_selection()
             except sqlite3.Error as e:
                 QMessageBox.critical(self, "Database Error", str(e))
 
@@ -623,7 +736,7 @@ class EventPlannerApp(QWidget):
 
     def load_events(self, show_archived=False):
         """Load events (active or archived)"""
-        self.event_list.clear()
+        self.events_table.setRowCount(0)
         # Clear all existing date highlights
         self.calendar.setDateTextFormat(QDate(), QTextCharFormat())
         
@@ -637,20 +750,35 @@ class EventPlannerApp(QWidget):
             highlight_format = QTextCharFormat()
             highlight_format.setBackground(QColor("lightgreen"))
         
-        for event in events:
+        self.events_table.setRowCount(len(events))
+        
+        for row, event in enumerate(events):
             date = QDate.fromString(event[2], "yyyy-MM-dd")
             if not show_archived:
                 self.calendar.setDateTextFormat(date, highlight_format)
             
-            # Add to event list
-            time_str = f" at {event[3]}" if event[3] else ""
-            archived_str = " (Archived)" if show_archived else ""
-            item = QListWidgetItem(f"{event[1]} - {date.toString('MMM d, yyyy')}{time_str}{archived_str}")
-            item.setData(Qt.UserRole, event)
-            self.event_list.addItem(item)
+            # Add to events table
+            self.events_table.setItem(row, 0, QTableWidgetItem(str(event[0])))
+            self.events_table.setItem(row, 1, QTableWidgetItem(event[1]))
+            self.events_table.setItem(row, 2, QTableWidgetItem(event[2]))
+            self.events_table.setItem(row, 3, QTableWidgetItem(event[3] if event[3] else ""))
+            self.events_table.setItem(row, 4, QTableWidgetItem(event[4]))
+            self.events_table.setItem(row, 5, QTableWidgetItem(event[5]))
 
-    def display_event_details(self, item):
-        event = item.data(Qt.UserRole)
+    def display_event_details(self):
+        """Display details of the selected event"""
+        if not self.events_table.currentItem():
+            return
+            
+        current_row = self.events_table.currentRow()
+        event_id = int(self.events_table.item(current_row, 0).text())
+        event = self.db.get_event_by_id(event_id)
+        
+        if not event:
+            return
+            
+        self.current_event_id = event_id
+        
         time_str = f"<b>Time:</b> {event[3]}<br>" if event[3] else ""
         archived_str = "<b>Status:</b> Archived<br>" if len(event) > 6 and event[6] else ""
         details = (
@@ -662,7 +790,6 @@ class EventPlannerApp(QWidget):
             f"<p>{event[5].replace('\n', '<br>')}</p>"
         )
         self.details_panel.setHtml(details)
-        self.current_event_id = event[0]
         self.load_guests()
         self.load_tasks()
 
@@ -844,32 +971,69 @@ class EventPlannerApp(QWidget):
             except sqlite3.Error as e:
                 QMessageBox.critical(self, "Database Error", str(e))
 
+    def export_to_csv(self):
+        """Export all data to CSV files"""
+        filename, _ = QFileDialog.getSaveFileName(
+            self, "Export to CSV", "", "CSV Files (*.csv)"
+        )
+        
+        if filename:
+            if not filename.endswith('.csv'):
+                filename += '.csv'
+            try:
+                self.db.export_to_csv(filename[:-4])  # Remove .csv extension
+                self.status_bar.showMessage("Data exported to CSV successfully", 3000)
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", str(e))
+
+    def export_to_json(self):
+        """Export all data to JSON file"""
+        filename, _ = QFileDialog.getSaveFileName(
+            self, "Export to JSON", "", "JSON Files (*.json)"
+        )
+        
+        if filename:
+            if not filename.endswith('.json'):
+                filename += '.json'
+            try:
+                self.db.export_to_json(filename[:-5])  # Remove .json extension
+                self.status_bar.showMessage("Data exported to JSON successfully", 3000)
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", str(e))
+
     def search_events(self, text):
-        self.event_list.clear()
+        self.events_table.setRowCount(0)
         events = self.db.search_events(text) if text else self.db.get_all_events()
-        for event in events:
-            date = QDate.fromString(event[2], "yyyy-MM-dd")
-            time_str = f" at {event[3]}" if event[3] else ""
-            item = QListWidgetItem(f"{event[1]} - {date.toString('MMM d, yyyy')}{time_str}")
-            item.setData(Qt.UserRole, event)
-            self.event_list.addItem(item)
+        self.events_table.setRowCount(len(events))
+        
+        for row, event in enumerate(events):
+            self.events_table.setItem(row, 0, QTableWidgetItem(str(event[0])))
+            self.events_table.setItem(row, 1, QTableWidgetItem(event[1]))
+            self.events_table.setItem(row, 2, QTableWidgetItem(event[2]))
+            self.events_table.setItem(row, 3, QTableWidgetItem(event[3] if event[3] else ""))
+            self.events_table.setItem(row, 4, QTableWidgetItem(event[4]))
+            self.events_table.setItem(row, 5, QTableWidgetItem(event[5]))
 
     def calendar_date_selected(self):
         date_str = self.calendar.selectedDate().toString("yyyy-MM-dd")
-        self.event_list.clear()
+        self.events_table.setRowCount(0)
         events = self.db.get_events_by_date(date_str)
-        for event in events:
-            time_str = f" at {event[3]}" if event[3] else ""
-            item = QListWidgetItem(f"{event[1]}{time_str}")
-            item.setData(Qt.UserRole, event)
-            self.event_list.addItem(item)
+        self.events_table.setRowCount(len(events))
+        
+        for row, event in enumerate(events):
+            self.events_table.setItem(row, 0, QTableWidgetItem(str(event[0])))
+            self.events_table.setItem(row, 1, QTableWidgetItem(event[1]))
+            self.events_table.setItem(row, 2, QTableWidgetItem(event[2]))
+            self.events_table.setItem(row, 3, QTableWidgetItem(event[3] if event[3] else ""))
+            self.events_table.setItem(row, 4, QTableWidgetItem(event[4]))
+            self.events_table.setItem(row, 5, QTableWidgetItem(event[5]))
 
     def go_to_today(self):
         self.calendar.setSelectedDate(QDate.currentDate())
         self.calendar_date_selected()
 
     def clear_selection(self):
-        self.event_list.clearSelection()
+        self.events_table.clearSelection()
         self.details_panel.clear()
         self.guests_table.setRowCount(0)
         self.guests_label.setText("Guests")
@@ -885,5 +1049,5 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle('Fusion')  # Modern look
     window = EventPlannerApp()
-    window.show()
+    window.showMaximized()  # Start maximized
     sys.exit(app.exec_())
