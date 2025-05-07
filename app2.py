@@ -9,7 +9,7 @@ from PyQt5.QtCore import Qt, QDate
 from PyQt5.QtGui import QTextCharFormat, QColor, QFont
 import sys
 
-# SQLite database helper
+# SQLite database helper (same as before)
 class EventDatabase:
     def __init__(self, db_name="events.db"):
         self.conn = sqlite3.connect(db_name)
@@ -73,9 +73,9 @@ class EventDatabase:
             return self.conn.execute('SELECT * FROM events WHERE id = ?', (event_id,)).fetchone()
 
 class EventDialog(QDialog):
-    def __init__(self, parent=None, event_data=None):
+    def __init__(self, parent=None, event_data=None, edit_mode=False):
         super().__init__(parent)
-        self.setWindowTitle("Create New Event" if not event_data else "Edit Event")
+        self.setWindowTitle("Edit Event" if edit_mode else "Create New Event")
         self.layout = QFormLayout(self)
 
         self.name_input = QLineEdit(self)
@@ -147,26 +147,34 @@ class EventPlannerApp(QWidget):
         nav_layout.addWidget(self.clear_btn)
         
         # Action buttons
-        self.add_event_btn = QPushButton("Add Event")
-        self.add_event_btn.clicked.connect(lambda: self.add_edit_event())
-        self.delete_event_btn = QPushButton("Delete Event")
+        button_layout = QVBoxLayout()
+        self.add_event_btn = QPushButton("Add New Event")
+        self.add_event_btn.clicked.connect(self.add_event)
+        self.edit_event_btn = QPushButton("Edit Selected Event")
+        self.edit_event_btn.clicked.connect(self.edit_event)
+        self.delete_event_btn = QPushButton("Delete Selected Event")
         self.delete_event_btn.clicked.connect(self.delete_event)
+        
+        # Disable edit/delete buttons initially
+        self.edit_event_btn.setEnabled(False)
         self.delete_event_btn.setEnabled(False)
+        
+        button_layout.addWidget(self.add_event_btn)
+        button_layout.addWidget(self.edit_event_btn)
+        button_layout.addWidget(self.delete_event_btn)
+        button_layout.addStretch()
 
         self.sidebar.addWidget(self.search_input)
         self.sidebar.addWidget(self.calendar)
         self.sidebar.addLayout(nav_layout)
-        self.sidebar.addWidget(self.add_event_btn)
-        self.sidebar.addWidget(self.delete_event_btn)
-        self.sidebar.addStretch()
+        self.sidebar.addLayout(button_layout)
 
         # Right panel
         right_panel = QVBoxLayout()
         
         # Event list
         self.event_list = QListWidget()
-        self.event_list.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.event_list.customContextMenuRequested.connect(self.show_context_menu)
+        self.event_list.itemSelectionChanged.connect(self.toggle_edit_delete_buttons)
         
         # Details panel
         self.details_panel = QTextBrowser()
@@ -189,39 +197,27 @@ class EventPlannerApp(QWidget):
         self.load_events()
         self.go_to_today()
 
-    def show_context_menu(self, position):
-        if not self.event_list.itemAt(position):
-            return
-            
-        menu = QMenu()
-        edit_action = QAction("Edit Event", self)
-        edit_action.triggered.connect(self.edit_selected_event)
-        menu.addAction(edit_action)
-        
-        delete_action = QAction("Delete Event", self)
-        delete_action.triggered.connect(self.delete_event)
-        menu.addAction(delete_action)
-        
-        menu.exec_(self.event_list.mapToGlobal(position))
+    def toggle_edit_delete_buttons(self):
+        """Enable/disable edit and delete buttons based on selection"""
+        has_selection = bool(self.event_list.currentItem())
+        self.edit_event_btn.setEnabled(has_selection)
+        self.delete_event_btn.setEnabled(has_selection)
 
-    def add_edit_event(self, event_data=None):
-        dialog = EventDialog(self, event_data)
+    def add_event(self):
+        """Open dialog to add a new event"""
+        dialog = EventDialog(self)
         if dialog.exec_() == QDialog.Accepted:
             data = dialog.get_data()
             try:
-                if event_data and 'id' in event_data:
-                    self.db.update_event(event_data['id'], data['name'], data['date'], 
-                                         data['venue'], data['description'])
-                    self.status_bar.showMessage("Event updated successfully", 3000)
-                else:
-                    self.db.add_event(data['name'], data['date'], 
-                                    data['venue'], data['description'])
-                    self.status_bar.showMessage("Event added successfully", 3000)
+                self.db.add_event(data['name'], data['date'], 
+                                data['venue'], data['description'])
+                self.status_bar.showMessage("Event added successfully", 3000)
                 self.load_events()
             except sqlite3.Error as e:
                 QMessageBox.critical(self, "Database Error", str(e))
 
-    def edit_selected_event(self):
+    def edit_event(self):
+        """Open dialog to edit selected event"""
         if not self.event_list.currentItem():
             return
             
@@ -233,7 +229,23 @@ class EventPlannerApp(QWidget):
             'venue': event[3],
             'description': event[4]
         }
-        self.add_edit_event(event_data)
+        
+        dialog = EventDialog(self, event_data, edit_mode=True)
+        if dialog.exec_() == QDialog.Accepted:
+            data = dialog.get_data()
+            try:
+                self.db.update_event(event[0], data['name'], data['date'], 
+                                   data['venue'], data['description'])
+                self.status_bar.showMessage("Event updated successfully", 3000)
+                self.load_events()
+                # Keep the edited event selected
+                for i in range(self.event_list.count()):
+                    item = self.event_list.item(i)
+                    if item.data(Qt.UserRole)[0] == event[0]:
+                        self.event_list.setCurrentItem(item)
+                        break
+            except sqlite3.Error as e:
+                QMessageBox.critical(self, "Database Error", str(e))
 
     def delete_event(self):
         if not self.event_list.currentItem():
@@ -282,7 +294,6 @@ class EventPlannerApp(QWidget):
             f"<p>{event[4].replace('\n', '<br>')}</p>"
         )
         self.details_panel.setHtml(details)
-        self.delete_event_btn.setEnabled(True)
 
     def search_events(self, text):
         self.event_list.clear()
@@ -309,7 +320,6 @@ class EventPlannerApp(QWidget):
     def clear_selection(self):
         self.event_list.clearSelection()
         self.details_panel.clear()
-        self.delete_event_btn.setEnabled(False)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
