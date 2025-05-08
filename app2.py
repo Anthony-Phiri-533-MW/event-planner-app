@@ -102,7 +102,6 @@ class EventDatabase:
                 )
             ''')
 
-    # User management methods
     def create_user(self, username, password, email=None):
         with self.conn:
             password_hash = self._hash_password(password)
@@ -137,7 +136,6 @@ class EventDatabase:
         """Check a hashed password."""
         return self._hash_password(password) == stored_hash
 
-    # Event methods
     def add_event(self, user_id, name, date, time, venue, description):
         with self.conn:
             cursor = self.conn.cursor()
@@ -157,10 +155,8 @@ class EventDatabase:
 
     def delete_event(self, event_id):
         with self.conn:
-            # First delete associated guests and tasks
             self.conn.execute('DELETE FROM guests WHERE event_id = ?', (event_id,))
             self.conn.execute('DELETE FROM tasks WHERE event_id = ?', (event_id,))
-            # Then delete the event
             self.conn.execute('DELETE FROM events WHERE id = ?', (event_id,))
 
     def get_all_events(self, user_id):
@@ -200,7 +196,6 @@ class EventDatabase:
         with self.conn:
             return self.conn.execute('SELECT * FROM events WHERE id = ?', (event_id,)).fetchone()
 
-    # Task management methods
     def add_task(self, event_id, description):
         with self.conn:
             self.conn.execute('''
@@ -228,7 +223,6 @@ class EventDatabase:
         with self.conn:
             self.conn.execute('DELETE FROM tasks WHERE id = ?', (task_id,))
 
-    # Guest management methods
     def add_guest(self, event_id, name, email):
         with self.conn:
             self.conn.execute('''
@@ -252,18 +246,15 @@ class EventDatabase:
         """Archive an event by moving it to archived_events table"""
         with self.conn:
             cursor = self.conn.cursor()
-            # Get event details
             event = self.get_event_by_id(event_id)
             if not event:
                 return False
                 
-            # Check if all tasks are completed
             tasks = self.get_tasks_for_event(event_id)
             if tasks and not all(task[3] for task in tasks):
                 return False
                 
             try:
-                # Insert into archived_events
                 cursor.execute('''
                     INSERT INTO archived_events (
                         id, user_id, name, date, time, venue, description, archived_date
@@ -273,11 +264,8 @@ class EventDatabase:
                     datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 ))
                 
-                # Delete associated tasks and guests
                 cursor.execute('DELETE FROM tasks WHERE event_id = ?', (event_id,))
                 cursor.execute('DELETE FROM guests WHERE event_id = ?', (event_id,))
-                
-                # Delete the event from events table
                 cursor.execute('DELETE FROM events WHERE id = ?', (event_id,))
                 
                 return True
@@ -286,21 +274,18 @@ class EventDatabase:
 
     def export_to_csv(self, user_id, filename):
         with self.conn:
-            # Export events
             events = self.conn.execute('SELECT * FROM events WHERE user_id = ?', (user_id,)).fetchall()
             with open(f'{filename}_events.csv', 'w', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow(['ID', 'User ID', 'Name', 'Date', 'Time', 'Venue', 'Description', 'Is Archived'])
                 writer.writerows(events)
             
-            # Export archived events
             archived = self.conn.execute('SELECT * FROM archived_events WHERE user_id = ?', (user_id,)).fetchall()
             with open(f'{filename}_archived.csv', 'w', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow(['ID', 'User ID', 'Name', 'Date', 'Time', 'Venue', 'Description', 'Archived Date'])
                 writer.writerows(archived)
             
-            # Export tasks
             tasks = self.conn.execute('''
                 SELECT t.* FROM tasks t
                 JOIN events e ON t.event_id = e.id
@@ -311,7 +296,6 @@ class EventDatabase:
                 writer.writerow(['ID', 'Event ID', 'Description', 'Is Completed'])
                 writer.writerows(tasks)
             
-            # Export guests
             guests = self.conn.execute('''
                 SELECT g.* FROM guests g
                 JOIN events e ON g.event_id = e.id
@@ -331,7 +315,6 @@ class EventDatabase:
         }
         
         with self.conn:
-            # Get events data
             for row in self.conn.execute('SELECT * FROM events WHERE user_id = ?', (user_id,)):
                 data['events'].append({
                     'id': row[0],
@@ -344,7 +327,6 @@ class EventDatabase:
                     'is_archived': bool(row[7])
                 })
             
-            # Get archived events
             for row in self.conn.execute('SELECT * FROM archived_events WHERE user_id = ?', (user_id,)):
                 data['archived_events'].append({
                     'id': row[0],
@@ -357,7 +339,6 @@ class EventDatabase:
                     'archived_date': row[7]
                 })
             
-            # Get tasks
             for row in self.conn.execute('''
                 SELECT t.* FROM tasks t
                 JOIN events e ON t.event_id = e.id
@@ -370,7 +351,6 @@ class EventDatabase:
                     'is_completed': bool(row[3])
                 })
             
-            # Get guests
             for row in self.conn.execute('''
                 SELECT g.* FROM guests g
                 JOIN events e ON g.event_id = e.id
@@ -463,7 +443,7 @@ class EventDialog(QDialog):
         self.date_input.setCalendarPopup(True)
         self.date_input.setDate(QDate.currentDate())
         self.time_input = QTimeEdit(self)
-        self.time_input.setTime(QTime(19, 0))  # Default to 7:00 PM
+        self.time_input.setTime(QTime(19, 0))
         self.venue_input = QLineEdit(self)
         self.desc_input = QTextEdit(self)
 
@@ -585,6 +565,7 @@ class EventPlannerApp(QWidget):
         self.db = EventDatabase()
         self.current_user_id = None
         self.current_username = None
+        self.is_fullscreen = False
         
         # Create stacked widget for login/main app
         self.stacked_widget = QStackedWidget()
@@ -608,8 +589,8 @@ class EventPlannerApp(QWidget):
         # Show login screen first
         self.stacked_widget.setCurrentIndex(0)
         self.setWindowTitle("Event Planner - Login")
-        self.setMinimumSize(1200, 800)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
+        self.setMinimumSize(800, 600)
+        self.setWindowFlags(Qt.Window | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
         
         # Set color palette
         self.set_color_palette()
@@ -745,22 +726,19 @@ class EventPlannerApp(QWidget):
         
     def setup_login_ui(self):
         layout = QVBoxLayout(self.login_widget)
-        layout.setAlignment(Qt.AlignCenter)  # Center all contents
+        layout.setAlignment(Qt.AlignCenter)
         
-        # Title
         title = QLabel("Event Planner")
         title.setAlignment(Qt.AlignCenter)
         title.setFont(QFont("Arial", 24, QFont.Bold))
         title.setStyleSheet("color: #FF6584;")
         layout.addWidget(title)
         
-        # Button container with fixed width
         button_container = QWidget()
         button_layout = QVBoxLayout(button_container)
-        button_layout.setContentsMargins(50, 20, 50, 20)  # Add some padding
-        button_container.setFixedWidth(300)  # Fixed width for buttons
+        button_layout.setContentsMargins(50, 20, 50, 20)
+        button_container.setFixedWidth(300)
         
-        # Login button
         login_btn = QPushButton("Login")
         login_btn.setFont(QFont("Arial", 12))
         login_btn.setStyleSheet("padding: 10px;")
@@ -768,7 +746,6 @@ class EventPlannerApp(QWidget):
         login_btn.clicked.connect(self.show_login_dialog)
         button_layout.addWidget(login_btn)
         
-        # Signup button
         signup_btn = QPushButton("Sign Up")
         signup_btn.setFont(QFont("Arial", 12))
         signup_btn.setStyleSheet("padding: 10px;")
@@ -781,8 +758,9 @@ class EventPlannerApp(QWidget):
     def setup_main_ui(self):
         layout = QHBoxLayout(self.main_widget)
         
-        # Left sidebar
-        self.sidebar = QVBoxLayout()
+        # Left sidebar with scroll area
+        sidebar_widget = QWidget()
+        self.sidebar = QVBoxLayout(sidebar_widget)
         self.sidebar.setContentsMargins(10, 10, 10, 10)
         
         # Search
@@ -861,6 +839,11 @@ class EventPlannerApp(QWidget):
         self.archive_btn.setProperty("class", "accent")
         self.archive_btn.clicked.connect(self.archive_event)
         
+        # Full-screen toggle button
+        self.fullscreen_btn = QPushButton("Toggle Full Screen")
+        self.fullscreen_btn.setProperty("class", "accent")
+        self.fullscreen_btn.clicked.connect(self.toggle_fullscreen)
+        
         # Logout button
         self.logout_btn = QPushButton("Logout")
         self.logout_btn.setProperty("class", "logout")
@@ -880,10 +863,18 @@ class EventPlannerApp(QWidget):
         button_layout.addWidget(self.archive_btn)
         button_layout.addWidget(self.export_csv_btn)
         button_layout.addWidget(self.export_json_btn)
+        button_layout.addWidget(self.fullscreen_btn)
         button_layout.addWidget(self.logout_btn)
         button_layout.addStretch()
-
+        
         self.sidebar.addLayout(button_layout)
+        self.sidebar.addStretch()
+        
+        # Wrap sidebar in scroll area
+        sidebar_scroll = QScrollArea()
+        sidebar_scroll.setWidgetResizable(True)
+        sidebar_scroll.setWidget(sidebar_widget)
+        sidebar_scroll.setFixedWidth(350)
         
         # Right panel
         right_panel = QVBoxLayout()
@@ -909,7 +900,6 @@ class EventPlannerApp(QWidget):
         right_panel.addWidget(self.details_label)
         right_panel.addWidget(self.details_panel)
         
-        # Create scroll areas for guests and tasks
         # Guests table in scroll area
         self.guests_label = QLabel("Guests")
         self.guests_label.setFont(QFont("Arial", 12, QFont.Bold))
@@ -950,7 +940,7 @@ class EventPlannerApp(QWidget):
         self.status_bar.setFont(QFont("Arial", 9))
         right_panel.addWidget(self.status_bar)
 
-        layout.addLayout(self.sidebar, 1)
+        layout.addWidget(sidebar_scroll, 1)
         layout.addLayout(right_panel, 2)
 
     def toggle_event_buttons(self, enabled):
@@ -988,7 +978,7 @@ class EventPlannerApp(QWidget):
 
     def on_task_status_changed(self, item):
         """Handle task completion status changes"""
-        if item.column() == 2:  # Only for Completed column
+        if item.column() == 2:
             task_id = int(self.tasks_table.item(item.row(), 0).text())
             is_completed = item.checkState() == Qt.Checked
             try:
@@ -1065,7 +1055,7 @@ class EventPlannerApp(QWidget):
         event_id = int(self.events_table.item(current_row, 0).text())
         event = self.db.get_event_by_id(event_id)
         
-        if not event or event[1] != self.current_user_id:  # Check user owns this event
+        if not event or event[1] != self.current_user_id:
             QMessageBox.warning(self, "Error", "You can only edit your own events")
             return
             
@@ -1097,7 +1087,6 @@ class EventPlannerApp(QWidget):
         event_id = int(self.events_table.item(current_row, 0).text())
         event_name = self.events_table.item(current_row, 1).text()
         
-        # Verify user owns this event
         event = self.db.get_event_by_id(event_id)
         if not event or event[1] != self.current_user_id:
             QMessageBox.warning(self, "Error", "You can only delete your own events")
@@ -1126,13 +1115,11 @@ class EventPlannerApp(QWidget):
         current_row = self.events_table.currentRow()
         event_id = int(self.events_table.item(current_row, 0).text())
         
-        # Verify user owns this event
         event = self.db.get_event_by_id(event_id)
         if not event or event[1] != self.current_user_id:
             QMessageBox.warning(self, "Error", "You can only archive your own events")
             return
         
-        # Check if all tasks are completed
         tasks = self.db.get_tasks_for_event(event_id)
         if tasks and not all(task[3] for task in tasks):
             QMessageBox.warning(self, "Cannot Archive", 
@@ -1168,7 +1155,6 @@ class EventPlannerApp(QWidget):
             return
             
         self.events_table.setRowCount(0)
-        # Clear all existing date highlights
         self.calendar.setDateTextFormat(QDate(), QTextCharFormat())
         
         if show_archived:
@@ -1177,18 +1163,16 @@ class EventPlannerApp(QWidget):
             highlight_format.setBackground(QColor("#3E4351"))
         else:
             events = self.db.get_all_events(self.current_user_id)
-            # Highlight dates with events
             highlight_format = QTextCharFormat()
             highlight_format.setBackground(QColor("#FF6584"))
         
         self.events_table.setRowCount(len(events))
         
         for row, event in enumerate(events):
-            date = QDate.fromString(event[3], "yyyy-MM-dd")  # Date is at index 3 for events, 4 for archived
+            date = QDate.fromString(event[3], "yyyy-MM-dd")
             if not show_archived:
                 self.calendar.setDateTextFormat(date, highlight_format)
             
-            # Add to events table
             self.events_table.setItem(row, 0, QTableWidgetItem(str(event[0])))
             self.events_table.setItem(row, 1, QTableWidgetItem(event[2]))
             self.events_table.setItem(row, 2, QTableWidgetItem(event[3]))
@@ -1253,7 +1237,6 @@ class EventPlannerApp(QWidget):
             self.tasks_table.setItem(row, 0, QTableWidgetItem(str(task[0])))
             self.tasks_table.setItem(row, 1, QTableWidgetItem(task[2]))
             
-            # Add checkbox for completed status
             item = QTableWidgetItem()
             item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
             item.setCheckState(Qt.Checked if task[3] else Qt.Unchecked)
@@ -1305,7 +1288,6 @@ class EventPlannerApp(QWidget):
         if dialog.exec_() == QDialog.Accepted:
             data = dialog.get_data()
             try:
-                # Since we don't have an update_guest method, we'll delete and re-add
                 self.db.delete_guest(guest_id)
                 self.db.add_guest(self.current_event_id, data['name'], data['email'])
                 self.status_bar.showMessage("Guest updated successfully", 3000)
@@ -1347,9 +1329,10 @@ class EventPlannerApp(QWidget):
             try:
                 self.db.add_task(self.current_event_id, data['description'])
                 if data['completed']:
-                    # If added as completed, we'd need to get the last inserted ID
-                    # For simplicity, we'll just reload all tasks
-                    pass
+                    cursor = self.db.conn.cursor()
+                    cursor.execute('SELECT last_insert_rowid()')
+                    new_task_id = cursor.fetchone()[0]
+                    self.db.update_task_status(new_task_id, data['completed'])
                 self.status_bar.showMessage("Task added successfully", 3000)
                 self.load_tasks()
             except sqlite3.Error as e:
@@ -1376,7 +1359,6 @@ class EventPlannerApp(QWidget):
                 self.db.delete_task(task_id)
                 self.db.add_task(self.current_event_id, data['description'])
                 if data['completed']:
-                    # Get the last inserted task ID and set it as completed
                     cursor = self.db.conn.cursor()
                     cursor.execute('SELECT last_insert_rowid()')
                     new_task_id = cursor.fetchone()[0]
@@ -1422,7 +1404,7 @@ class EventPlannerApp(QWidget):
             if not filename.endswith('.csv'):
                 filename += '.csv'
             try:
-                self.db.export_to_csv(self.current_user_id, filename[:-4])  # Remove .csv extension
+                self.db.export_to_csv(self.current_user_id, filename[:-4])
                 self.status_bar.showMessage("Data exported to CSV successfully", 3000)
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", str(e))
@@ -1440,7 +1422,7 @@ class EventPlannerApp(QWidget):
             if not filename.endswith('.json'):
                 filename += '.json'
             try:
-                self.db.export_to_json(self.current_user_id, filename[:-5])  # Remove .json extension
+                self.db.export_to_json(self.current_user_id, filename[:-5])
                 self.status_bar.showMessage("Data exported to JSON successfully", 3000)
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", str(e))
@@ -1495,9 +1477,21 @@ class EventPlannerApp(QWidget):
         self.toggle_task_buttons(False)
         self.archive_btn.setEnabled(False)
 
+    def toggle_fullscreen(self):
+        """Toggle between full-screen and normal window mode"""
+        if self.is_fullscreen:
+            self.showNormal()
+            self.fullscreen_btn.setText("Toggle Full Screen")
+            self.is_fullscreen = False
+        else:
+            self.showFullScreen()
+            self.fullscreen_btn.setText("Exit Full Screen")
+            self.is_fullscreen = True
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
     window = EventPlannerApp()
-    window.showMaximized()
+    window.resize(1000, 600)
+    window.show()
     sys.exit(app.exec_())
