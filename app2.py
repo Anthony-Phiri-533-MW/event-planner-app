@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox, QCalendarWidget, QDateEdit, QMessageBox, QTextBrowser,
     QStatusBar, QTimeEdit, QTableWidget, QTableWidgetItem,
     QHeaderView, QCheckBox, QStyledItemDelegate, QScrollArea, QFileDialog,
-    QStackedWidget
+    QStackedWidget, QTextEdit
 )
 from PyQt5.QtCore import Qt, QDate, QTime
 from PyQt5.QtGui import QTextCharFormat, QColor, QFont
@@ -593,30 +593,171 @@ class EventPlannerApp(QWidget):
         self.setMinimumSize(1200, 800)
         self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
         
+        # Set color palette
+        self.set_color_palette()
+        
+    def set_color_palette(self):
+        # Main window background
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #1E1E2F;
+                color: #FFFFFF;
+            }
+            
+            /* Primary buttons */
+            QPushButton {
+                background-color: #3E4351;
+                color: #FFFFFF;
+                border: 1px solid #2C2F3A;
+                padding: 8px;
+                border-radius: 4px;
+            }
+            
+            QPushButton:hover {
+                background-color: #575C66;
+            }
+            
+            /* Vibrant Coral buttons */
+            QPushButton.primary {
+                background-color: #FF6584;
+                font-weight: bold;
+            }
+            
+            QPushButton.primary:hover {
+                background-color: #FF4B5C;
+            }
+            
+            /* Logout button */
+            QPushButton.logout {
+                background-color: #FF4B5C;
+                font-weight: bold;
+            }
+            
+            QPushButton.logout:hover {
+                background-color: #FF2D3D;
+            }
+            
+            /* Golden Yellow accent */
+            QPushButton.accent {
+                background-color: #FFCC00;
+                color: #000000;
+                font-weight: bold;
+            }
+            
+            QPushButton.accent:hover {
+                background-color: #FFD633;
+            }
+            
+            /* Tables */
+            QTableWidget {
+                background-color: #2C2F3A;
+                alternate-background-color: #3E4351;
+                gridline-color: #2C2F3A;
+            }
+            
+            QHeaderView::section {
+                background-color: #3E4351;
+                padding: 5px;
+                border: 1px solid #2C2F3A;
+            }
+            
+            /* Calendar */
+            QCalendarWidget {
+                background-color: #2C2F3A;
+            }
+            
+            QCalendarWidget QAbstractItemView:enabled {
+                color: #FFFFFF;
+                selection-background-color: #42A5F5;
+                selection-color: #FFFFFF;
+            }
+            
+            /* Text inputs */
+            QLineEdit, QTextEdit, QTextBrowser {
+                background-color: #2C2F3A;
+                border: 1px solid #3E4351;
+                padding: 5px;
+                border-radius: 3px;
+            }
+            
+            /* Dialogs */
+            QDialog {
+                background-color: #1E1E2F;
+            }
+            
+            /* Labels */
+            QLabel {
+                color: #FFFFFF;
+            }
+            
+            /* Checkboxes */
+            QCheckBox {
+                color: #FFFFFF;
+            }
+            
+            /* Scroll bars */
+            QScrollBar:vertical {
+                border: 1px solid #3E4351;
+                background: #2C2F3A;
+                width: 15px;
+                margin: 22px 0 22px 0;
+            }
+            
+            QScrollBar::handle:vertical {
+                background: #3E4351;
+                min-height: 20px;
+            }
+            
+            QScrollBar::add-line:vertical {
+                border: 1px solid #3E4351;
+                background: #2C2F3A;
+                height: 20px;
+                subcontrol-position: bottom;
+                subcontrol-origin: margin;
+            }
+            
+            QScrollBar::sub-line:vertical {
+                border: 1px solid #3E4351;
+                background: #2C2F3A;
+                height: 20px;
+                subcontrol-position: top;
+                subcontrol-origin: margin;
+            }
+        """)
+        
     def setup_login_ui(self):
         layout = QVBoxLayout(self.login_widget)
+        layout.setAlignment(Qt.AlignCenter)  # Center all contents
         
         # Title
         title = QLabel("Event Planner")
         title.setAlignment(Qt.AlignCenter)
         title.setFont(QFont("Arial", 24, QFont.Bold))
+        title.setStyleSheet("color: #FF6584;")
         layout.addWidget(title)
+        
+        # Button container with fixed width
+        button_container = QWidget()
+        button_layout = QVBoxLayout(button_container)
+        button_layout.setContentsMargins(50, 20, 50, 20)  # Add some padding
+        button_container.setFixedWidth(300)  # Fixed width for buttons
         
         # Login button
         login_btn = QPushButton("Login")
         login_btn.setFont(QFont("Arial", 12))
         login_btn.setStyleSheet("padding: 10px;")
+        login_btn.setProperty("class", "primary")
         login_btn.clicked.connect(self.show_login_dialog)
-        layout.addWidget(login_btn)
+        button_layout.addWidget(login_btn)
         
         # Signup button
         signup_btn = QPushButton("Sign Up")
         signup_btn.setFont(QFont("Arial", 12))
         signup_btn.setStyleSheet("padding: 10px;")
         signup_btn.clicked.connect(self.show_signup_dialog)
-        layout.addWidget(signup_btn)
+        button_layout.addWidget(signup_btn)
         
-        # Add some spacing
+        layout.addWidget(button_container)
         layout.addStretch()
         
     def setup_main_ui(self):
@@ -656,6 +797,7 @@ class EventPlannerApp(QWidget):
         # Action buttons
         button_layout = QVBoxLayout()
         self.add_event_btn = QPushButton("Add New Event")
+        self.add_event_btn.setProperty("class", "primary")
         self.add_event_btn.clicked.connect(self.add_event)
         self.edit_event_btn = QPushButton("Edit Selected Event")
         self.edit_event_btn.clicked.connect(self.edit_event)
@@ -664,8 +806,10 @@ class EventPlannerApp(QWidget):
         
         # Export buttons
         self.export_csv_btn = QPushButton("Export to CSV")
+        self.export_csv_btn.setProperty("class", "accent")
         self.export_csv_btn.clicked.connect(self.export_to_csv)
         self.export_json_btn = QPushButton("Export to JSON")
+        self.export_json_btn.setProperty("class", "accent")
         self.export_json_btn.clicked.connect(self.export_to_json)
         
         # Guest management buttons
@@ -696,12 +840,13 @@ class EventPlannerApp(QWidget):
         
         # Archive button
         self.archive_btn = QPushButton("Archive Event")
+        self.archive_btn.setProperty("class", "accent")
         self.archive_btn.clicked.connect(self.archive_event)
         
         # Logout button
         self.logout_btn = QPushButton("Logout")
+        self.logout_btn.setProperty("class", "logout")
         self.logout_btn.clicked.connect(self.logout)
-        self.logout_btn.setStyleSheet("background-color: #f44336; color: white;")
         
         # Disable buttons initially
         self.toggle_event_buttons(False)
@@ -1000,12 +1145,12 @@ class EventPlannerApp(QWidget):
         if show_archived:
             events = self.db.get_archived_events(self.current_user_id)
             highlight_format = QTextCharFormat()
-            highlight_format.setBackground(QColor("lightgray"))
+            highlight_format.setBackground(QColor("#3E4351"))
         else:
             events = self.db.get_all_events(self.current_user_id)
             # Highlight dates with events
             highlight_format = QTextCharFormat()
-            highlight_format.setBackground(QColor("lightgreen"))
+            highlight_format.setBackground(QColor("#FF6584"))
         
         self.events_table.setRowCount(len(events))
         
