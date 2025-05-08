@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QDate, QTime
 from PyQt5.QtGui import QTextCharFormat, QColor, QFont
 import sys
+from datetime import datetime
 
 # Custom delegate for checkbox in table
 class CheckBoxDelegate(QStyledItemDelegate):
@@ -248,23 +249,40 @@ class EventDatabase:
             self.conn.execute('DELETE FROM guests WHERE id = ?', (guest_id,))
 
     def archive_event(self, event_id):
+        """Archive an event by moving it to archived_events table"""
         with self.conn:
-            # Get event data
+            cursor = self.conn.cursor()
+            # Get event details
             event = self.get_event_by_id(event_id)
             if not event:
                 return False
-            
-            # Insert into archived_events
-            self.conn.execute('''
-                INSERT INTO archived_events 
-                (id, user_id, name, date, time, venue, description, archived_date)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (event[0], event[1], event[2], event[3], event[4], event[5], event[6], 
-                 QDate.currentDate().toString("yyyy-MM-dd")))
-            
-            # Delete from active events
-            self.delete_event(event_id)
-            return True
+                
+            # Check if all tasks are completed
+            tasks = self.get_tasks_for_event(event_id)
+            if tasks and not all(task[3] for task in tasks):
+                return False
+                
+            try:
+                # Insert into archived_events
+                cursor.execute('''
+                    INSERT INTO archived_events (
+                        id, user_id, name, date, time, venue, description, archived_date
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    event[0], event[1], event[2], event[3], event[4], event[5], event[6],
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                ))
+                
+                # Delete associated tasks and guests
+                cursor.execute('DELETE FROM tasks WHERE event_id = ?', (event_id,))
+                cursor.execute('DELETE FROM guests WHERE event_id = ?', (event_id,))
+                
+                # Delete the event from events table
+                cursor.execute('DELETE FROM events WHERE id = ?', (event_id,))
+                
+                return True
+            except sqlite3.Error:
+                return False
 
     def export_to_csv(self, user_id, filename):
         with self.conn:
@@ -958,6 +976,7 @@ class EventPlannerApp(QWidget):
         self.toggle_event_buttons(has_selection)
         if has_selection:
             self.display_event_details()
+        self.check_archive_status()
 
     def on_guest_selection_changed(self):
         """Handle guest selection changes"""
@@ -1112,7 +1131,14 @@ class EventPlannerApp(QWidget):
         if not event or event[1] != self.current_user_id:
             QMessageBox.warning(self, "Error", "You can only archive your own events")
             return
-            
+        
+        # Check if all tasks are completed
+        tasks = self.db.get_tasks_for_event(event_id)
+        if tasks and not all(task[3] for task in tasks):
+            QMessageBox.warning(self, "Cannot Archive", 
+                              "All tasks must be completed before archiving")
+            return
+        
         reply = QMessageBox.question(
             self, 'Archive Event', 
             f"Archive '{event[2]}' and all its tasks/guests?",
@@ -1121,10 +1147,13 @@ class EventPlannerApp(QWidget):
         
         if reply == QMessageBox.Yes:
             try:
-                if self.db.archive_event(event_id):
+                success = self.db.archive_event(event_id)
+                if success:
                     self.status_bar.showMessage("Event archived successfully", 3000)
-                    self.load_events()
+                    self.load_events(self.view_toggle.isChecked())
                     self.clear_selection()
+                else:
+                    QMessageBox.warning(self, "Error", "Failed to archive event")
             except sqlite3.Error as e:
                 QMessageBox.critical(self, "Database Error", str(e))
 
@@ -1161,11 +1190,11 @@ class EventPlannerApp(QWidget):
             
             # Add to events table
             self.events_table.setItem(row, 0, QTableWidgetItem(str(event[0])))
-            self.events_table.setItem(row, 1, QTableWidgetItem(event[2] if show_archived else event[2]))
-            self.events_table.setItem(row, 2, QTableWidgetItem(event[3] if show_archived else event[3]))
+            self.events_table.setItem(row, 1, QTableWidgetItem(event[2]))
+            self.events_table.setItem(row, 2, QTableWidgetItem(event[3]))
             self.events_table.setItem(row, 3, QTableWidgetItem(event[4] if event[4] else ""))
-            self.events_table.setItem(row, 4, QTableWidgetItem(event[5] if show_archived else event[5]))
-            self.events_table.setItem(row, 5, QTableWidgetItem(event[6] if show_archived else event[6]))
+            self.events_table.setItem(row, 4, QTableWidgetItem(event[5]))
+            self.events_table.setItem(row, 5, QTableWidgetItem(event[6]))
 
     def display_event_details(self):
         """Display details of the selected event"""
@@ -1234,14 +1263,14 @@ class EventPlannerApp(QWidget):
         self.check_archive_status()
 
     def check_archive_status(self):
-        """Check if all tasks are completed and enable archive button"""
+        """Check if event can be archived and enable archive button"""
         if not self.current_event_id:
             self.archive_btn.setEnabled(False)
             return
             
         tasks = self.db.get_tasks_for_event(self.current_event_id)
-        all_completed = all(task[3] for task in tasks) if tasks else False
-        self.archive_btn.setEnabled(all_completed)
+        can_archive = not tasks or all(task[3] for task in tasks)
+        self.archive_btn.setEnabled(can_archive and not self.view_toggle.isChecked())
 
     def add_guest(self):
         """Add a new guest to the current event"""
@@ -1344,7 +1373,14 @@ class EventPlannerApp(QWidget):
         if dialog.exec_() == QDialog.Accepted:
             data = dialog.get_data()
             try:
-                self.db.update_task_status(task_id, data['completed'])
+                self.db.delete_task(task_id)
+                self.db.add_task(self.current_event_id, data['description'])
+                if data['completed']:
+                    # Get the last inserted task ID and set it as completed
+                    cursor = self.db.conn.cursor()
+                    cursor.execute('SELECT last_insert_rowid()')
+                    new_task_id = cursor.fetchone()[0]
+                    self.db.update_task_status(new_task_id, data['completed'])
                 self.status_bar.showMessage("Task updated successfully", 3000)
                 self.load_tasks()
             except sqlite3.Error as e:
