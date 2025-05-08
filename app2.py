@@ -763,18 +763,6 @@ class EventPlannerApp(QWidget):
         self.sidebar = QVBoxLayout(sidebar_widget)
         self.sidebar.setContentsMargins(10, 10, 10, 10)
         
-        # Full-screen toggle button
-        self.fullscreen_btn = QPushButton("Toggle Full Screen")
-        self.fullscreen_btn.setProperty("class", "accent")
-        self.fullscreen_btn.clicked.connect(self.toggle_fullscreen)
-        self.sidebar.addWidget(self.fullscreen_btn)
-        
-        # Logout button
-        self.logout_btn = QPushButton("Logout")
-        self.logout_btn.setProperty("class", "logout")
-        self.logout_btn.clicked.connect(self.logout)
-        self.sidebar.addWidget(self.logout_btn)
-        
         # Search
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search events...")
@@ -851,6 +839,16 @@ class EventPlannerApp(QWidget):
         self.archive_btn.setProperty("class", "accent")
         self.archive_btn.clicked.connect(self.archive_event)
         
+        # Full-screen toggle button
+        self.fullscreen_btn = QPushButton("Toggle Full Screen")
+        self.fullscreen_btn.setProperty("class", "accent")
+        self.fullscreen_btn.clicked.connect(self.toggle_fullscreen)
+        
+        # Logout button
+        self.logout_btn = QPushButton("Logout")
+        self.logout_btn.setProperty("class", "logout")
+        self.logout_btn.clicked.connect(self.logout)
+        
         # Disable buttons initially
         self.toggle_event_buttons(False)
         self.toggle_guest_buttons(False)
@@ -865,6 +863,8 @@ class EventPlannerApp(QWidget):
         button_layout.addWidget(self.archive_btn)
         button_layout.addWidget(self.export_csv_btn)
         button_layout.addWidget(self.export_json_btn)
+        button_layout.addWidget(self.fullscreen_btn)
+        button_layout.addWidget(self.logout_btn)
         button_layout.addStretch()
         
         self.sidebar.addLayout(button_layout)
@@ -874,7 +874,7 @@ class EventPlannerApp(QWidget):
         sidebar_scroll = QScrollArea()
         sidebar_scroll.setWidgetResizable(True)
         sidebar_scroll.setWidget(sidebar_widget)
-        sidebar_scroll.setFixedWidth(350)  # Set a reasonable fixed width for sidebar
+        sidebar_scroll.setFixedWidth(350)
         
         # Right panel
         right_panel = QVBoxLayout()
