@@ -2,6 +2,7 @@ import sqlite3
 import csv
 import json
 import hashlib
+import requests
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QLineEdit, QFormLayout, QDialog,
@@ -117,6 +118,47 @@ class EventDatabase:
                 if self._check_password(password, stored_hash):
                     return user_id
             return None
+
+    def update_user(self, user_id, password=None, email=None):
+        with self.conn:
+            cursor = self.conn.cursor()
+            if password:
+                password_hash = self._hash_password(password)
+                cursor.execute('''
+                    UPDATE users 
+                    SET password_hash = ?
+                    WHERE id = ?
+                ''', (password_hash, user_id))
+            if email is not None:
+                cursor.execute('''
+                    UPDATE users 
+                    SET email = ?
+                    WHERE id = ?
+                ''', (email, user_id))
+
+    def get_user_by_id(self, user_id):
+        with self.conn:
+            cursor = self.conn.cursor()
+            cursor.execute('''
+                SELECT id, username, password_hash, email 
+                FROM users WHERE id = ?
+            ''', (user_id,))
+            result = cursor.fetchone()
+            if result:
+                return {
+                    "id": result[0],
+                    "username": result[1],
+                    "password_hash": result[2],
+                    "email": result[3]
+                }
+            return None
+
+    def get_user_email(self, user_id):
+        with self.conn:
+            cursor = self.conn.cursor()
+            cursor.execute('SELECT email FROM users WHERE id = ?', (user_id,))
+            result = cursor.fetchone()
+            return result[0] if result else None
 
     def _hash_password(self, password):
         return hashlib.sha256(password.encode()).hexdigest()
@@ -341,6 +383,105 @@ class EventDatabase:
         with open(f'{filename}.json', 'w') as f:
             json.dump(data, f, indent=4)
 
+    def get_backup_data(self, user_id):
+        data = {
+            "user_id": user_id,
+            "user": self.get_user_by_id(user_id),
+            "events": [],
+            "archived_events": [],
+            "tasks": [],
+            "guests": [],
+            "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S")
+        }
+        with self.conn:
+            for row in self.conn.execute('SELECT * FROM events WHERE user_id = ?', (user_id,)):
+                data['events'].append({
+                    'id': row[0],
+                    'user_id': row[1],
+                    'name': row[2],
+                    'date': row[3],
+                    'time': row[4],
+                    'venue': row[5],
+                    'description': row[6],
+                    'is_archived': bool(row[7])
+                })
+            for row in self.conn.execute('SELECT * FROM archived_events WHERE user_id = ?', (user_id,)):
+                data['archived_events'].append({
+                    'id': row[0],
+                    'user_id': row[1],
+                    'name': row[2],
+                    'date': row[3],
+                    'time': row[4],
+                    'venue': row[5],
+                    'description': row[6],
+                    'archived_date': row[7]
+                })
+            for row in self.conn.execute('SELECT * FROM tasks WHERE event_id IN (SELECT id FROM events WHERE user_id = ?)', (user_id,)):
+                data['tasks'].append({
+                    'id': row[0],
+                    'event_id': row[1],
+                    'description': row[2],
+                    'is_completed': bool(row[3])
+                })
+            for row in self.conn.execute('SELECT * FROM guests WHERE event_id IN (SELECT id FROM events WHERE user_id = ?)', (user_id,)):
+                data['guests'].append({
+                    'id': row[0],
+                    'event_id': row[1],
+                    'name': row[2],
+                    'email': row[3]
+                })
+        return data
+
+    def restore_backup_data(self, backup_data):
+        user_id = backup_data['user_id']
+        with self.conn:
+            # Clear existing data for the user
+            self.conn.execute('DELETE FROM guests WHERE event_id IN (SELECT id FROM events WHERE user_id = ?)', (user_id,))
+            self.conn.execute('DELETE FROM tasks WHERE event_id IN (SELECT id FROM events WHERE user_id = ?)', (user_id,))
+            self.conn.execute('DELETE FROM events WHERE user_id = ?', (user_id,))
+            self.conn.execute('DELETE FROM archived_events WHERE user_id = ?', (user_id,))
+            # Restore user
+            user = backup_data['user']
+            self.conn.execute('''
+                INSERT OR REPLACE INTO users (id, username, password_hash, email)
+                VALUES (?, ?, ?, ?)
+            ''', (user['id'], user['username'], user['password_hash'], user['email']))
+            # Restore events
+            for event in backup_data['events']:
+                self.conn.execute('''
+                    INSERT INTO events (id, user_id, name, date, time, venue, description, is_archived)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    event['id'], event['user_id'], event['name'], event['date'],
+                    event['time'], event['venue'], event['description'], 1 if event['is_archived'] else 0
+                ))
+            # Restore archived events
+            for archived_event in backup_data['archived_events']:
+                self.conn.execute('''
+                    INSERT INTO archived_events (id, user_id, name, date, time, venue, description, archived_date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    archived_event['id'], archived_event['user_id'], archived_event['name'],
+                    archived_event['date'], archived_event['time'], archived_event['venue'],
+                    archived_event['description'], archived_event['archived_date']
+                ))
+            # Restore tasks
+            for task in backup_data['tasks']:
+                self.conn.execute('''
+                    INSERT INTO tasks (id, event_id, description, is_completed)
+                    VALUES (?, ?, ?, ?)
+                ''', (
+                    task['id'], task['event_id'], task['description'], 1 if task['is_completed'] else 0
+                ))
+            # Restore guests
+            for guest in backup_data['guests']:
+                self.conn.execute('''
+                    INSERT INTO guests (id, event_id, name, email)
+                    VALUES (?, ?, ?, ?)
+                ''', (
+                    guest['id'], guest['event_id'], guest['name'], guest['email']
+                ))
+
 class TaskDialog(QDialog):
     def __init__(self, parent=None, task_data=None):
         super().__init__(parent)
@@ -513,6 +654,117 @@ class SignupDialog(QDialog):
             "password": self.password_input.text(),
             "email": self.email_input.text() or None
         }
+
+class SettingsDialog(QDialog):
+    def __init__(self, parent=None, current_email=None):
+        super().__init__(parent)
+        self.setWindowTitle("Settings")
+        self.layout = QFormLayout(self)
+        self.password_input = QLineEdit(self)
+        self.password_input.setEchoMode(QLineEdit.Password)
+        self.confirm_password_input = QLineEdit(self)
+        self.confirm_password_input.setEchoMode(QLineEdit.Password)
+        self.email_input = QLineEdit(self)
+        self.api_url_input = QLineEdit(self)
+        self.api_url_input.setText("https://event-planner-application-backup-api.onrender.com")
+        if current_email:
+            self.email_input.setText(current_email)
+        self.layout.addRow("New Password (optional):", self.password_input)
+        self.layout.addRow("Confirm New Password:", self.confirm_password_input)
+        self.layout.addRow("Email (optional):", self.email_input)
+        self.layout.addRow("API URL:", self.api_url_input)
+        self.backup_btn = QPushButton("Backup Data")
+        self.backup_btn.clicked.connect(self.perform_backup)
+        self.layout.addWidget(self.backup_btn)
+        self.recover_btn = QPushButton("Recover Data")
+        self.recover_btn.clicked.connect(self.perform_recovery)
+        self.layout.addWidget(self.recover_btn)
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
+        self.buttons.accepted.connect(self.validate)
+        self.buttons.rejected.connect(self.reject)
+        self.layout.addWidget(self.buttons)
+
+    def validate(self):
+        password = self.password_input.text().strip()
+        confirm_password = self.confirm_password_input.text().strip()
+        if password or confirm_password:
+            if password != confirm_password:
+                QMessageBox.warning(self, "Error", "Passwords do not match")
+                return
+            if len(password) < 6:
+                QMessageBox.warning(self, "Error", "Password must be at least 6 characters")
+                return
+        self.accept()
+
+    def get_user_data(self):
+        return {
+            "password": self.password_input.text() or None,
+            "email": self.email_input.text() or None
+        }
+
+    def perform_backup(self):
+        api_url = self.api_url_input.text().strip()
+        if not api_url:
+            QMessageBox.warning(self, "Error", "API URL is required")
+            return
+        reply = QMessageBox.question(
+            self, 'Backup Data',
+            "Are you sure you want to backup your data to the specified API?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        parent = self.parent()
+        if not hasattr(parent, 'current_user_id') or not parent.current_user_id:
+            QMessageBox.warning(self, "Error", "No user is logged in")
+            return
+        try:
+            data = parent.db.get_backup_data(parent.current_user_id)
+            response = requests.post(f"{api_url}/backup", json=data, timeout=10)
+            response.raise_for_status()
+            result = response.json()
+            parent.status_bar.showMessage(f"Backup completed: {result['message']}", 5000)
+        except requests.exceptions.RequestException as e:
+            QMessageBox.critical(self, "Backup Error", f"Failed to connect to API: {str(e)}")
+        except ValueError as e:
+            QMessageBox.critical(self, "Backup Error", f"Invalid API response: {str(e)}")
+        except Exception as e:
+            QMessageBox.critical(self, "Backup Error", f"Backup failed: {str(e)}")
+
+    def perform_recovery(self):
+        api_url = self.api_url_input.text().strip()
+        if not api_url:
+            QMessageBox.warning(self, "Error", "API URL is required")
+            return
+        reply = QMessageBox.question(
+            self, 'Recover Data',
+            "This will overwrite your current data with the backup from the API. Are you sure you want to proceed?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        parent = self.parent()
+        if not hasattr(parent, 'current_user_id') or not parent.current_user_id:
+            QMessageBox.warning(self, "Error", "No user is logged in")
+            return
+        try:
+            response = requests.get(f"{api_url}/recover/{parent.current_user_id}", timeout=10)
+            response.raise_for_status()
+            backup_data = response.json()
+            parent.db.restore_backup_data(backup_data)
+            parent.load_events()
+            parent.status_bar.showMessage("Data recovered successfully", 5000)
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                QMessageBox.critical(self, "Recovery Error", "No backup found for this user")
+            else:
+                QMessageBox.critical(self, "Recovery Error", f"API error: {str(e)}")
+        except requests.exceptions.RequestException as e:
+            QMessageBox.critical(self, "Recovery Error", f"Failed to connect to API: {str(e)}")
+        except ValueError as e:
+            QMessageBox.critical(self, "Recovery Error", f"Invalid API response: {str(e)}")
+        except Exception as e:
+            QMessageBox.critical(self, "Recovery Error", f"Recovery failed: {str(e)}")
 
 class EventPlannerApp(QWidget):
     def __init__(self):
@@ -824,6 +1076,9 @@ class EventPlannerApp(QWidget):
         self.export_json_btn = QPushButton("Export to JSON")
         self.export_json_btn.setProperty("class", "accent")
         self.export_json_btn.clicked.connect(self.export_to_json)
+        self.settings_btn = QPushButton("Settings")
+        self.settings_btn.setProperty("class", "accent")
+        self.settings_btn.clicked.connect(self.show_settings_dialog)
         self.guest_buttons_layout = QHBoxLayout()
         self.add_guest_btn = QPushButton("Add Guest")
         self.add_guest_btn.clicked.connect(self.add_guest)
@@ -868,6 +1123,7 @@ class EventPlannerApp(QWidget):
         button_layout.addWidget(self.archive_btn)
         button_layout.addWidget(self.export_csv_btn)
         button_layout.addWidget(self.export_json_btn)
+        button_layout.addWidget(self.settings_btn)
         button_layout.addWidget(self.fullscreen_btn)
         button_layout.addWidget(self.theme_toggle_btn)
         button_layout.addWidget(self.logout_btn)
@@ -998,6 +1254,23 @@ class EventPlannerApp(QWidget):
                 QMessageBox.information(self, "Success", "Account created successfully! Please login.")
             else:
                 QMessageBox.warning(self, "Error", "Username already exists")
+
+    def show_settings_dialog(self):
+        if not self.current_user_id:
+            return
+        current_email = self.db.get_user_email(self.current_user_id)
+        dialog = SettingsDialog(self, current_email)
+        if dialog.exec_() == QDialog.Accepted:
+            user_data = dialog.get_user_data()
+            try:
+                self.db.update_user(
+                    self.current_user_id,
+                    password=user_data['password'],
+                    email=user_data['email']
+                )
+                self.status_bar.showMessage("Settings updated successfully", 3000)
+            except sqlite3.Error as e:
+                QMessageBox.critical(self, "Database Error", str(e))
 
     def logout(self):
         self.current_user_id = None
