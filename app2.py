@@ -25,7 +25,6 @@ class CheckBoxDelegate(QStyledItemDelegate):
 
     def editorEvent(self, event, model, option, index):
         if event.type() == event.MouseButtonRelease and event.button() == Qt.LeftButton:
-            # Toggle the checkbox state
             current_value = index.data(Qt.CheckStateRole)
             new_value = Qt.Unchecked if current_value == Qt.Checked else Qt.Checked
             model.setData(index, new_value, Qt.CheckStateRole)
@@ -40,7 +39,6 @@ class EventDatabase:
 
     def create_tables(self):
         with self.conn:
-            # Users table
             self.conn.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY,
@@ -49,8 +47,6 @@ class EventDatabase:
                     email TEXT
                 )
             ''')
-            
-            # Events table
             self.conn.execute('''
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY,
@@ -64,8 +60,6 @@ class EventDatabase:
                     FOREIGN KEY (user_id) REFERENCES users(id)
                 )
             ''')
-            
-            # Archived events table
             self.conn.execute('''
                 CREATE TABLE IF NOT EXISTS archived_events (
                     id INTEGER PRIMARY KEY,
@@ -79,8 +73,6 @@ class EventDatabase:
                     FOREIGN KEY (user_id) REFERENCES users(id)
                 )
             ''')
-            
-            # Tasks table
             self.conn.execute('''
                 CREATE TABLE IF NOT EXISTS tasks (
                     id INTEGER PRIMARY KEY,
@@ -90,8 +82,6 @@ class EventDatabase:
                     FOREIGN KEY (event_id) REFERENCES events(id)
                 )
             ''')
-            
-            # Guests table
             self.conn.execute('''
                 CREATE TABLE IF NOT EXISTS guests (
                     id INTEGER PRIMARY KEY,
@@ -113,7 +103,7 @@ class EventDatabase:
                 ''', (username, password_hash, email))
                 return cursor.lastrowid
             except sqlite3.IntegrityError:
-                return None  # Username already exists
+                return None
 
     def authenticate_user(self, username, password):
         with self.conn:
@@ -129,11 +119,9 @@ class EventDatabase:
             return None
 
     def _hash_password(self, password):
-        """Hash a password for storing."""
         return hashlib.sha256(password.encode()).hexdigest()
 
     def _check_password(self, password, stored_hash):
-        """Check a hashed password."""
         return self._hash_password(password) == stored_hash
 
     def add_event(self, user_id, name, date, time, venue, description):
@@ -243,17 +231,14 @@ class EventDatabase:
             self.conn.execute('DELETE FROM guests WHERE id = ?', (guest_id,))
 
     def archive_event(self, event_id):
-        """Archive an event by moving it to archived_events table"""
         with self.conn:
             cursor = self.conn.cursor()
             event = self.get_event_by_id(event_id)
             if not event:
                 return False
-                
             tasks = self.get_tasks_for_event(event_id)
             if tasks and not all(task[3] for task in tasks):
                 return False
-                
             try:
                 cursor.execute('''
                     INSERT INTO archived_events (
@@ -263,11 +248,9 @@ class EventDatabase:
                     event[0], event[1], event[2], event[3], event[4], event[5], event[6],
                     datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 ))
-                
                 cursor.execute('DELETE FROM tasks WHERE event_id = ?', (event_id,))
                 cursor.execute('DELETE FROM guests WHERE event_id = ?', (event_id,))
                 cursor.execute('DELETE FROM events WHERE id = ?', (event_id,))
-                
                 return True
             except sqlite3.Error:
                 return False
@@ -279,13 +262,11 @@ class EventDatabase:
                 writer = csv.writer(f)
                 writer.writerow(['ID', 'User ID', 'Name', 'Date', 'Time', 'Venue', 'Description', 'Is Archived'])
                 writer.writerows(events)
-            
             archived = self.conn.execute('SELECT * FROM archived_events WHERE user_id = ?', (user_id,)).fetchall()
             with open(f'{filename}_archived.csv', 'w', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow(['ID', 'User ID', 'Name', 'Date', 'Time', 'Venue', 'Description', 'Archived Date'])
                 writer.writerows(archived)
-            
             tasks = self.conn.execute('''
                 SELECT t.* FROM tasks t
                 JOIN events e ON t.event_id = e.id
@@ -295,7 +276,6 @@ class EventDatabase:
                 writer = csv.writer(f)
                 writer.writerow(['ID', 'Event ID', 'Description', 'Is Completed'])
                 writer.writerows(tasks)
-            
             guests = self.conn.execute('''
                 SELECT g.* FROM guests g
                 JOIN events e ON g.event_id = e.id
@@ -313,7 +293,6 @@ class EventDatabase:
             'tasks': [],
             'guests': []
         }
-        
         with self.conn:
             for row in self.conn.execute('SELECT * FROM events WHERE user_id = ?', (user_id,)):
                 data['events'].append({
@@ -326,7 +305,6 @@ class EventDatabase:
                     'description': row[6],
                     'is_archived': bool(row[7])
                 })
-            
             for row in self.conn.execute('SELECT * FROM archived_events WHERE user_id = ?', (user_id,)):
                 data['archived_events'].append({
                     'id': row[0],
@@ -338,7 +316,6 @@ class EventDatabase:
                     'description': row[6],
                     'archived_date': row[7]
                 })
-            
             for row in self.conn.execute('''
                 SELECT t.* FROM tasks t
                 JOIN events e ON t.event_id = e.id
@@ -350,7 +327,6 @@ class EventDatabase:
                     'description': row[2],
                     'is_completed': bool(row[3])
                 })
-            
             for row in self.conn.execute('''
                 SELECT g.* FROM guests g
                 JOIN events e ON g.event_id = e.id
@@ -362,7 +338,6 @@ class EventDatabase:
                     'name': row[2],
                     'email': row[3]
                 })
-        
         with open(f'{filename}.json', 'w') as f:
             json.dump(data, f, indent=4)
 
@@ -371,17 +346,13 @@ class TaskDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Edit Task" if task_data else "Add Task")
         self.layout = QFormLayout(self)
-
         self.desc_input = QLineEdit(self)
         self.completed_check = QCheckBox("Completed", self)
-
         if task_data:
             self.desc_input.setText(task_data['description'])
             self.completed_check.setChecked(task_data['completed'])
-
         self.layout.addRow("Task Description:", self.desc_input)
         self.layout.addRow(self.completed_check)
-
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
         self.buttons.accepted.connect(self.validate)
         self.buttons.rejected.connect(self.reject)
@@ -404,17 +375,13 @@ class GuestDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Edit Guest" if guest_data else "Add Guest")
         self.layout = QFormLayout(self)
-
         self.name_input = QLineEdit(self)
         self.email_input = QLineEdit(self)
-
         if guest_data:
             self.name_input.setText(guest_data['name'])
             self.email_input.setText(guest_data['email'])
-
         self.layout.addRow("Guest Name:", self.name_input)
         self.layout.addRow("Email:", self.email_input)
-
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
         self.buttons.accepted.connect(self.validate)
         self.buttons.rejected.connect(self.reject)
@@ -437,7 +404,6 @@ class EventDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Edit Event" if edit_mode else "Create New Event")
         self.layout = QFormLayout(self)
-
         self.name_input = QLineEdit(self)
         self.date_input = QDateEdit(self)
         self.date_input.setCalendarPopup(True)
@@ -446,7 +412,6 @@ class EventDialog(QDialog):
         self.time_input.setTime(QTime(19, 0))
         self.venue_input = QLineEdit(self)
         self.desc_input = QTextEdit(self)
-
         if event_data:
             self.name_input.setText(event_data['name'])
             self.date_input.setDate(QDate.fromString(event_data['date'], "yyyy-MM-dd"))
@@ -454,13 +419,11 @@ class EventDialog(QDialog):
                 self.time_input.setTime(QTime.fromString(event_data['time'], "HH:mm"))
             self.venue_input.setText(event_data['venue'])
             self.desc_input.setPlainText(event_data['description'])
-
         self.layout.addRow("Event Name:", self.name_input)
         self.layout.addRow("Date:", self.date_input)
         self.layout.addRow("Time:", self.time_input)
         self.layout.addRow("Venue:", self.venue_input)
         self.layout.addRow("Description:", self.desc_input)
-
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
         self.buttons.accepted.connect(self.validate)
         self.buttons.rejected.connect(self.reject)
@@ -486,14 +449,11 @@ class LoginDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Login")
         self.layout = QFormLayout(self)
-
         self.username_input = QLineEdit(self)
         self.password_input = QLineEdit(self)
         self.password_input.setEchoMode(QLineEdit.Password)
-
         self.layout.addRow("Username:", self.username_input)
         self.layout.addRow("Password:", self.password_input)
-
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
         self.buttons.accepted.connect(self.validate)
         self.buttons.rejected.connect(self.reject)
@@ -516,19 +476,16 @@ class SignupDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Sign Up")
         self.layout = QFormLayout(self)
-
         self.username_input = QLineEdit(self)
         self.password_input = QLineEdit(self)
         self.password_input.setEchoMode(QLineEdit.Password)
         self.confirm_password_input = QLineEdit(self)
         self.confirm_password_input.setEchoMode(QLineEdit.Password)
         self.email_input = QLineEdit(self)
-
         self.layout.addRow("Username:", self.username_input)
         self.layout.addRow("Password:", self.password_input)
         self.layout.addRow("Confirm Password:", self.confirm_password_input)
         self.layout.addRow("Email (optional):", self.email_input)
-
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
         self.buttons.accepted.connect(self.validate)
         self.buttons.rejected.connect(self.reject)
@@ -539,7 +496,6 @@ class SignupDialog(QDialog):
         password = self.password_input.text().strip()
         confirm_password = self.confirm_password_input.text().strip()
         email = self.email_input.text().strip()
-
         if not username or not password:
             QMessageBox.warning(self, "Error", "Username and password are required")
             return
@@ -549,7 +505,6 @@ class SignupDialog(QDialog):
         if len(password) < 6:
             QMessageBox.warning(self, "Error", "Password must be at least 6 characters")
             return
-        
         self.accept()
 
     def get_user_data(self):
@@ -566,215 +521,280 @@ class EventPlannerApp(QWidget):
         self.current_user_id = None
         self.current_username = None
         self.is_fullscreen = False
-        
-        # Create stacked widget for login/main app
+        self.is_dark_theme = True
         self.stacked_widget = QStackedWidget()
-        
-        # Login/Signup screen
         self.login_widget = QWidget()
         self.setup_login_ui()
-        
-        # Main application screen
         self.main_widget = QWidget()
         self.setup_main_ui()
-        
-        # Add widgets to stack
         self.stacked_widget.addWidget(self.login_widget)
         self.stacked_widget.addWidget(self.main_widget)
-        
-        # Main layout
         main_layout = QVBoxLayout(self)
         main_layout.addWidget(self.stacked_widget)
-        
-        # Show login screen first
         self.stacked_widget.setCurrentIndex(0)
         self.setWindowTitle("Event Planner - Login")
         self.setMinimumSize(800, 600)
         self.setWindowFlags(Qt.Window | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
-        
-        # Set color palette
         self.set_color_palette()
-        
+
     def set_color_palette(self):
-        # Main window background
-        self.setStyleSheet("""
-            QWidget {
-                background-color: #1E1E2F;
-                color: #FFFFFF;
-            }
-            
-            /* Primary buttons */
-            QPushButton {
-                background-color: #3E4351;
-                color: #FFFFFF;
-                border: 1px solid #2C2F3A;
-                padding: 8px;
-                border-radius: 4px;
-            }
-            
-            QPushButton:hover {
-                background-color: #575C66;
-            }
-            
-            /* Vibrant Coral buttons */
-            QPushButton.primary {
-                background-color: #FF6584;
-                font-weight: bold;
-            }
-            
-            QPushButton.primary:hover {
-                background-color: #FF4B5C;
-            }
-            
-            /* Logout button */
-            QPushButton.logout {
-                background-color: #FF4B5C;
-                font-weight: bold;
-            }
-            
-            QPushButton.logout:hover {
-                background-color: #FF2D3D;
-            }
-            
-            /* Golden Yellow accent */
-            QPushButton.accent {
-                background-color: #FFCC00;
-                color: #000000;
-                font-weight: bold;
-            }
-            
-            QPushButton.accent:hover {
-                background-color: #FFD633;
-            }
-            
-            /* Tables */
-            QTableWidget {
-                background-color: #2C2F3A;
-                alternate-background-color: #3E4351;
-                gridline-color: #2C2F3A;
-            }
-            
-            QHeaderView::section {
-                background-color: #3E4351;
-                padding: 5px;
-                border: 1px solid #2C2F3A;
-            }
-            
-            /* Calendar */
-            QCalendarWidget {
-                background-color: #2C2F3A;
-            }
-            
-            QCalendarWidget QAbstractItemView:enabled {
-                color: #FFFFFF;
-                selection-background-color: #42A5F5;
-                selection-color: #FFFFFF;
-            }
-            
-            /* Text inputs */
-            QLineEdit, QTextEdit, QTextBrowser {
-                background-color: #2C2F3A;
-                border: 1px solid #3E4351;
-                padding: 5px;
-                border-radius: 3px;
-            }
-            
-            /* Dialogs */
-            QDialog {
-                background-color: #1E1E2F;
-            }
-            
-            /* Labels */
-            QLabel {
-                color: #FFFFFF;
-            }
-            
-            /* Checkboxes */
-            QCheckBox {
-                color: #FFFFFF;
-            }
-            
-            /* Scroll bars */
-            QScrollBar:vertical {
-                border: 1px solid #3E4351;
-                background: #2C2F3A;
-                width: 15px;
-                margin: 22px 0 22px 0;
-            }
-            
-            QScrollBar::handle:vertical {
-                background: #3E4351;
-                min-height: 20px;
-            }
-            
-            QScrollBar::add-line:vertical {
-                border: 1px solid #3E4351;
-                background: #2C2F3A;
-                height: 20px;
-                subcontrol-position: bottom;
-                subcontrol-origin: margin;
-            }
-            
-            QScrollBar::sub-line:vertical {
-                border: 1px solid #3E4351;
-                background: #2C2F3A;
-                height: 20px;
-                subcontrol-position: top;
-                subcontrol-origin: margin;
-            }
-        """)
-        
+        if self.is_dark_theme:
+            stylesheet = """
+                QWidget {
+                    background-color: #1E1E2F;
+                    color: #FFFFFF;
+                }
+                QPushButton {
+                    background-color: #3E4351;
+                    color: #FFFFFF;
+                    border: 1px solid #2C2F3A;
+                    padding: 8px;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #575C66;
+                }
+                QPushButton.primary {
+                    background-color: #FF6584;
+                    font-weight: bold;
+                }
+                QPushButton.primary:hover {
+                    background-color: #FF4B5C;
+                }
+                QPushButton.logout {
+                    background-color: #FF4B5C;
+                    font-weight: bold;
+                }
+                QPushButton.logout:hover {
+                    background-color: #FF2D3D;
+                }
+                QPushButton.accent {
+                    background-color: #FFCC00;
+                    color: #000000;
+                    font-weight: bold;
+                }
+                QPushButton.accent:hover {
+                    background-color: #FFD633;
+                }
+                QPushButton.theme-toggle {
+                    background-color: #42A5F5;
+                    color: #FFFFFF;
+                    font-weight: bold;
+                }
+                QPushButton.theme-toggle:hover {
+                    background-color: #2196F3;
+                }
+                QTableWidget {
+                    background-color: #2C2F3A;
+                    alternate-background-color: #3E4351;
+                    gridline-color: #2C2F3A;
+                }
+                QHeaderView::section {
+                    background-color: #3E4351;
+                    padding: 5px;
+                    border: 1px solid #2C2F3A;
+                }
+                QCalendarWidget {
+                    background-color: #2C2F3A;
+                }
+                QCalendarWidget QAbstractItemView:enabled {
+                    color: #FFFFFF;
+                    selection-background-color: #42A5F5;
+                    selection-color: #FFFFFF;
+                }
+                QLineEdit, QTextEdit, QTextBrowser {
+                    background-color: #2C2F3A;
+                    border: 1px solid #3E4351;
+                    padding: 5px;
+                    border-radius: 3px;
+                    color: #FFFFFF;
+                }
+                QDialog {
+                    background-color: #1E1E2F;
+                }
+                QLabel {
+                    color: #FFFFFF;
+                }
+                QCheckBox {
+                    color: #FFFFFF;
+                }
+                QScrollBar:vertical {
+                    border: 1px solid #3E4351;
+                    background: #2C2F3A;
+                    width: 15px;
+                    margin: 22px 0 22px 0;
+                }
+                QScrollBar::handle:vertical {
+                    background: #3E4351;
+                    min-height: 20px;
+                }
+                QScrollBar::add-line:vertical {
+                    border: 1px solid #3E4351;
+                    background: #2C2F3A;
+                    height: 20px;
+                    subcontrol-position: bottom;
+                    subcontrol-origin: margin;
+                }
+                QScrollBar::sub-line:vertical {
+                    border: 1px solid #3E4351;
+                    background: #2C2F3A;
+                    height: 20px;
+                    subcontrol-position: top;
+                    subcontrol-origin: margin;
+                }
+            """
+        else:
+            stylesheet = """
+                QWidget {
+                    background-color: #F5F5F5;
+                    color: #333333;
+                }
+                QPushButton {
+                    background-color: #E0E0E0;
+                    color: #333333;
+                    border: 1px solid #B0B0B0;
+                    padding: 8px;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #D0D0D0;
+                }
+                QPushButton.primary {
+                    background-color: #FF6584;
+                    color: #FFFFFF;
+                    font-weight: bold;
+                }
+                QPushButton.primary:hover {
+                    background-color: #FF4B5C;
+                }
+                QPushButton.logout {
+                    background-color: #FF4B5C;
+                    color: #FFFFFF;
+                    font-weight: bold;
+                }
+                QPushButton.logout:hover {
+                    background-color: #FF2D3D;
+                }
+                QPushButton.accent {
+                    background-color: #FFCC00;
+                    color: #000000;
+                    font-weight: bold;
+                }
+                QPushButton.accent:hover {
+                    background-color: #FFD633;
+                }
+                QPushButton.theme-toggle {
+                    background-color: #42A5F5;
+                    color: #FFFFFF;
+                    font-weight: bold;
+                }
+                QPushButton.theme-toggle:hover {
+                    background-color: #2196F3;
+                }
+                QTableWidget {
+                    background-color: #FFFFFF;
+                    alternate-background-color: #F0F0F0;
+                    gridline-color: #E0E0E0;
+                }
+                QHeaderView::section {
+                    background-color: #E0E0E0;
+                    padding: 5px;
+                    border: 1px solid #B0B0B0;
+                }
+                QCalendarWidget {
+                    background-color: #FFFFFF;
+                }
+                QCalendarWidget QAbstractItemView:enabled {
+                    color: #333333;
+                    selection-background-color: #42A5F5;
+                    selection-color: #FFFFFF;
+                }
+                QLineEdit, QTextEdit, QTextBrowser {
+                    background-color: #FFFFFF;
+                    border: 1px solid #B0B0B0;
+                    padding: 5px;
+                    border-radius: 3px;
+                    color: #333333;
+                }
+                QDialog {
+                    background-color: #F5F5F5;
+                }
+                QLabel {
+                    color: #333333;
+                }
+                QCheckBox {
+                    color: #333333;
+                }
+                QScrollBar:vertical {
+                    border: 1px solid #B0B0B0;
+                    background: #E0E0E0;
+                    width: 15px;
+                    margin: 22px 0 22px 0;
+                }
+                QScrollBar::handle:vertical {
+                    background: #B0B0B0;
+                    min-height: 20px;
+                }
+                QScrollBar::add-line:vertical {
+                    border: 1px solid #B0B0B0;
+                    background: #E0E0E0;
+                    height: 20px;
+                    subcontrol-position: bottom;
+                    subcontrol-origin: margin;
+                }
+                QScrollBar::sub-line:vertical {
+                    border: 1px solid #B0B0B0;
+                    background: #E0E0E0;
+                    height: 20px;
+                    subcontrol-position: top;
+                    subcontrol-origin: margin;
+                }
+            """
+        self.setStyleSheet(stylesheet)
+
+    def toggle_theme(self):
+        self.is_dark_theme = not self.is_dark_theme
+        self.theme_toggle_btn.setText("Dark Theme" if self.is_dark_theme else "Light Theme")
+        self.set_color_palette()
+
     def setup_login_ui(self):
         layout = QVBoxLayout(self.login_widget)
         layout.setAlignment(Qt.AlignCenter)
-        
         title = QLabel("Event Planner")
         title.setAlignment(Qt.AlignCenter)
         title.setFont(QFont("Arial", 24, QFont.Bold))
         title.setStyleSheet("color: #FF6584;")
         layout.addWidget(title)
-        
         button_container = QWidget()
         button_layout = QVBoxLayout(button_container)
         button_layout.setContentsMargins(50, 20, 50, 20)
         button_container.setFixedWidth(300)
-        
         login_btn = QPushButton("Login")
         login_btn.setFont(QFont("Arial", 12))
         login_btn.setStyleSheet("padding: 10px;")
         login_btn.setProperty("class", "primary")
         login_btn.clicked.connect(self.show_login_dialog)
         button_layout.addWidget(login_btn)
-        
         signup_btn = QPushButton("Sign Up")
         signup_btn.setFont(QFont("Arial", 12))
         signup_btn.setStyleSheet("padding: 10px;")
         signup_btn.clicked.connect(self.show_signup_dialog)
         button_layout.addWidget(signup_btn)
-        
         layout.addWidget(button_container)
         layout.addStretch()
-        
+
     def setup_main_ui(self):
         layout = QHBoxLayout(self.main_widget)
-        
-        # Left sidebar with scroll area
         sidebar_widget = QWidget()
         self.sidebar = QVBoxLayout(sidebar_widget)
         self.sidebar.setContentsMargins(10, 10, 10, 10)
-        
-        # Search
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search events...")
         self.search_input.textChanged.connect(self.search_events)
         self.sidebar.addWidget(self.search_input)
-        
-        # Calendar
         self.calendar = QCalendarWidget()
         self.calendar.selectionChanged.connect(self.calendar_date_selected)
         self.sidebar.addWidget(self.calendar)
-        
-        # Navigation buttons
         nav_layout = QHBoxLayout()
         self.today_btn = QPushButton("Today")
         self.today_btn.clicked.connect(self.go_to_today)
@@ -783,14 +803,10 @@ class EventPlannerApp(QWidget):
         nav_layout.addWidget(self.today_btn)
         nav_layout.addWidget(self.clear_btn)
         self.sidebar.addLayout(nav_layout)
-        
-        # View toggle
         self.view_toggle = QPushButton("View Archived Events")
         self.view_toggle.setCheckable(True)
         self.view_toggle.toggled.connect(self.toggle_event_view)
         self.sidebar.addWidget(self.view_toggle)
-        
-        # Action buttons
         button_layout = QVBoxLayout()
         self.add_event_btn = QPushButton("Add New Event")
         self.add_event_btn.setProperty("class", "primary")
@@ -799,16 +815,12 @@ class EventPlannerApp(QWidget):
         self.edit_event_btn.clicked.connect(self.edit_event)
         self.delete_event_btn = QPushButton("Delete Selected Event")
         self.delete_event_btn.clicked.connect(self.delete_event)
-        
-        # Export buttons
         self.export_csv_btn = QPushButton("Export to CSV")
         self.export_csv_btn.setProperty("class", "accent")
         self.export_csv_btn.clicked.connect(self.export_to_csv)
         self.export_json_btn = QPushButton("Export to JSON")
         self.export_json_btn.setProperty("class", "accent")
         self.export_json_btn.clicked.connect(self.export_to_json)
-        
-        # Guest management buttons
         self.guest_buttons_layout = QHBoxLayout()
         self.add_guest_btn = QPushButton("Add Guest")
         self.add_guest_btn.clicked.connect(self.add_guest)
@@ -816,12 +828,9 @@ class EventPlannerApp(QWidget):
         self.edit_guest_btn.clicked.connect(self.edit_guest)
         self.delete_guest_btn = QPushButton("Delete Guest")
         self.delete_guest_btn.clicked.connect(self.delete_guest)
-        
         self.guest_buttons_layout.addWidget(self.add_guest_btn)
         self.guest_buttons_layout.addWidget(self.edit_guest_btn)
         self.guest_buttons_layout.addWidget(self.delete_guest_btn)
-        
-        # Task management buttons
         self.task_buttons_layout = QHBoxLayout()
         self.add_task_btn = QPushButton("Add Task")
         self.add_task_btn.clicked.connect(self.add_task)
@@ -829,32 +838,25 @@ class EventPlannerApp(QWidget):
         self.edit_task_btn.clicked.connect(self.edit_task)
         self.delete_task_btn = QPushButton("Delete Task")
         self.delete_task_btn.clicked.connect(self.delete_task)
-        
         self.task_buttons_layout.addWidget(self.add_task_btn)
         self.task_buttons_layout.addWidget(self.edit_task_btn)
         self.task_buttons_layout.addWidget(self.delete_task_btn)
-        
-        # Archive button
         self.archive_btn = QPushButton("Archive Event")
         self.archive_btn.setProperty("class", "accent")
         self.archive_btn.clicked.connect(self.archive_event)
-        
-        # Full-screen toggle button
         self.fullscreen_btn = QPushButton("Toggle Full Screen")
         self.fullscreen_btn.setProperty("class", "accent")
         self.fullscreen_btn.clicked.connect(self.toggle_fullscreen)
-        
-        # Logout button
+        self.theme_toggle_btn = QPushButton("Light Theme")
+        self.theme_toggle_btn.setProperty("class", "theme-toggle")
+        self.theme_toggle_btn.clicked.connect(self.toggle_theme)
         self.logout_btn = QPushButton("Logout")
         self.logout_btn.setProperty("class", "logout")
         self.logout_btn.clicked.connect(self.logout)
-        
-        # Disable buttons initially
         self.toggle_event_buttons(False)
         self.toggle_guest_buttons(False)
         self.toggle_task_buttons(False)
         self.archive_btn.setEnabled(False)
-        
         button_layout.addWidget(self.add_event_btn)
         button_layout.addWidget(self.edit_event_btn)
         button_layout.addWidget(self.delete_event_btn)
@@ -864,23 +866,17 @@ class EventPlannerApp(QWidget):
         button_layout.addWidget(self.export_csv_btn)
         button_layout.addWidget(self.export_json_btn)
         button_layout.addWidget(self.fullscreen_btn)
+        button_layout.addWidget(self.theme_toggle_btn)
         button_layout.addWidget(self.logout_btn)
         button_layout.addStretch()
-        
         self.sidebar.addLayout(button_layout)
         self.sidebar.addStretch()
-        
-        # Wrap sidebar in scroll area
         sidebar_scroll = QScrollArea()
         sidebar_scroll.setWidgetResizable(True)
         sidebar_scroll.setWidget(sidebar_widget)
         sidebar_scroll.setFixedWidth(350)
-        
-        # Right panel
         right_panel = QVBoxLayout()
         right_panel.setContentsMargins(10, 10, 10, 10)
-        
-        # Event table
         self.events_label = QLabel("Events")
         self.events_label.setFont(QFont("Arial", 12, QFont.Bold))
         self.events_table = QTableWidget()
@@ -891,16 +887,12 @@ class EventPlannerApp(QWidget):
         self.events_table.itemSelectionChanged.connect(self.on_event_selection_changed)
         right_panel.addWidget(self.events_label)
         right_panel.addWidget(self.events_table)
-        
-        # Details panel
         self.details_label = QLabel("Details")
         self.details_label.setFont(QFont("Arial", 12, QFont.Bold))
         self.details_panel = QTextBrowser()
         self.details_panel.setOpenExternalLinks(True)
         right_panel.addWidget(self.details_label)
         right_panel.addWidget(self.details_panel)
-        
-        # Guests table in scroll area
         self.guests_label = QLabel("Guests")
         self.guests_label.setFont(QFont("Arial", 12, QFont.Bold))
         self.guests_table = QTableWidget()
@@ -910,14 +902,11 @@ class EventPlannerApp(QWidget):
         self.guests_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.guests_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.guests_table.itemSelectionChanged.connect(self.on_guest_selection_changed)
-        
         guests_scroll = QScrollArea()
         guests_scroll.setWidgetResizable(True)
         guests_scroll.setWidget(self.guests_table)
         right_panel.addWidget(self.guests_label)
         right_panel.addWidget(guests_scroll)
-        
-        # Tasks table in scroll area
         self.tasks_label = QLabel("Tasks")
         self.tasks_label.setFont(QFont("Arial", 12, QFont.Bold))
         self.tasks_table = QTableWidget()
@@ -928,40 +917,32 @@ class EventPlannerApp(QWidget):
         self.tasks_table.setItemDelegateForColumn(2, CheckBoxDelegate(self))
         self.tasks_table.itemChanged.connect(self.on_task_status_changed)
         self.tasks_table.itemSelectionChanged.connect(self.on_task_selection_changed)
-        
         tasks_scroll = QScrollArea()
         tasks_scroll.setWidgetResizable(True)
         tasks_scroll.setWidget(self.tasks_table)
         right_panel.addWidget(self.tasks_label)
         right_panel.addWidget(tasks_scroll)
-        
-        # Status bar
         self.status_bar = QStatusBar()
         self.status_bar.setFont(QFont("Arial", 9))
         right_panel.addWidget(self.status_bar)
-
         layout.addWidget(sidebar_scroll, 1)
         layout.addLayout(right_panel, 2)
 
     def toggle_event_buttons(self, enabled):
-        """Enable/disable event-related buttons"""
         self.edit_event_btn.setEnabled(enabled)
         self.delete_event_btn.setEnabled(enabled)
         self.add_guest_btn.setEnabled(enabled)
         self.add_task_btn.setEnabled(enabled)
 
     def toggle_guest_buttons(self, enabled):
-        """Enable/disable guest-related buttons"""
         self.edit_guest_btn.setEnabled(enabled)
         self.delete_guest_btn.setEnabled(enabled)
 
     def toggle_task_buttons(self, enabled):
-        """Enable/disable task-related buttons"""
         self.edit_task_btn.setEnabled(enabled)
         self.delete_task_btn.setEnabled(enabled)
 
     def on_event_selection_changed(self):
-        """Handle event selection changes"""
         has_selection = bool(self.events_table.currentItem())
         self.toggle_event_buttons(has_selection)
         if has_selection:
@@ -969,15 +950,12 @@ class EventPlannerApp(QWidget):
         self.check_archive_status()
 
     def on_guest_selection_changed(self):
-        """Handle guest selection changes"""
         self.toggle_guest_buttons(bool(self.guests_table.currentItem()))
 
     def on_task_selection_changed(self):
-        """Handle task selection changes"""
         self.toggle_task_buttons(bool(self.tasks_table.currentItem()))
 
     def on_task_status_changed(self, item):
-        """Handle task completion status changes"""
         if item.column() == 2:
             task_id = int(self.tasks_table.item(item.row(), 0).text())
             is_completed = item.checkState() == Qt.Checked
@@ -992,7 +970,6 @@ class EventPlannerApp(QWidget):
         if dialog.exec_() == QDialog.Accepted:
             credentials = dialog.get_credentials()
             user_id = self.db.authenticate_user(credentials['username'], credentials['password'])
-            
             if user_id:
                 self.current_user_id = user_id
                 self.current_username = credentials['username']
@@ -1011,7 +988,6 @@ class EventPlannerApp(QWidget):
                 user_data['password'],
                 user_data['email']
             )
-            
             if user_id:
                 QMessageBox.information(self, "Success", "Account created successfully! Please login.")
             else:
@@ -1025,10 +1001,8 @@ class EventPlannerApp(QWidget):
         self.clear_selection()
 
     def add_event(self):
-        """Open dialog to add a new event"""
         if not self.current_user_id:
             return
-            
         dialog = EventDialog(self)
         if dialog.exec_() == QDialog.Accepted:
             data = dialog.get_data()
@@ -1047,18 +1021,14 @@ class EventPlannerApp(QWidget):
                 QMessageBox.critical(self, "Database Error", str(e))
 
     def edit_event(self):
-        """Open dialog to edit selected event"""
         if not self.events_table.currentItem() or not self.current_user_id:
             return
-            
         current_row = self.events_table.currentRow()
         event_id = int(self.events_table.item(current_row, 0).text())
         event = self.db.get_event_by_id(event_id)
-        
         if not event or event[1] != self.current_user_id:
             QMessageBox.warning(self, "Error", "You can only edit your own events")
             return
-            
         event_data = {
             'id': event[0],
             'name': event[2],
@@ -1067,7 +1037,6 @@ class EventPlannerApp(QWidget):
             'venue': event[5],
             'description': event[6]
         }
-        
         dialog = EventDialog(self, event_data, edit_mode=True)
         if dialog.exec_() == QDialog.Accepted:
             data = dialog.get_data()
@@ -1082,22 +1051,18 @@ class EventPlannerApp(QWidget):
     def delete_event(self):
         if not self.events_table.currentItem() or not self.current_user_id:
             return
-            
         current_row = self.events_table.currentRow()
         event_id = int(self.events_table.item(current_row, 0).text())
         event_name = self.events_table.item(current_row, 1).text()
-        
         event = self.db.get_event_by_id(event_id)
         if not event or event[1] != self.current_user_id:
             QMessageBox.warning(self, "Error", "You can only delete your own events")
             return
-        
         reply = QMessageBox.question(
             self, 'Delete Event', 
             f"Are you sure you want to delete '{event_name}' and all its tasks/guests?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
-        
         if reply == QMessageBox.Yes:
             try:
                 self.db.delete_event(event_id)
@@ -1108,30 +1073,24 @@ class EventPlannerApp(QWidget):
                 QMessageBox.critical(self, "Database Error", str(e))
 
     def archive_event(self):
-        """Archive the current event"""
         if not self.current_user_id or not self.events_table.currentItem():
             return
-            
         current_row = self.events_table.currentRow()
         event_id = int(self.events_table.item(current_row, 0).text())
-        
         event = self.db.get_event_by_id(event_id)
         if not event or event[1] != self.current_user_id:
             QMessageBox.warning(self, "Error", "You can only archive your own events")
             return
-        
         tasks = self.db.get_tasks_for_event(event_id)
         if tasks and not all(task[3] for task in tasks):
             QMessageBox.warning(self, "Cannot Archive", 
                               "All tasks must be completed before archiving")
             return
-        
         reply = QMessageBox.question(
             self, 'Archive Event', 
             f"Archive '{event[2]}' and all its tasks/guests?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
-        
         if reply == QMessageBox.Yes:
             try:
                 success = self.db.archive_event(event_id)
@@ -1145,34 +1104,27 @@ class EventPlannerApp(QWidget):
                 QMessageBox.critical(self, "Database Error", str(e))
 
     def toggle_event_view(self, show_archived):
-        """Toggle between active and archived events view"""
         self.view_toggle.setText("View Active Events" if show_archived else "View Archived Events")
         self.load_events(show_archived)
 
     def load_events(self, show_archived=False):
-        """Load events (active or archived)"""
         if not self.current_user_id:
             return
-            
         self.events_table.setRowCount(0)
         self.calendar.setDateTextFormat(QDate(), QTextCharFormat())
-        
         if show_archived:
             events = self.db.get_archived_events(self.current_user_id)
             highlight_format = QTextCharFormat()
-            highlight_format.setBackground(QColor("#3E4351"))
+            highlight_format.setBackground(QColor("#3E4351" if self.is_dark_theme else "#E0E0E0"))
         else:
             events = self.db.get_all_events(self.current_user_id)
             highlight_format = QTextCharFormat()
             highlight_format.setBackground(QColor("#FF6584"))
-        
         self.events_table.setRowCount(len(events))
-        
         for row, event in enumerate(events):
             date = QDate.fromString(event[3], "yyyy-MM-dd")
             if not show_archived:
                 self.calendar.setDateTextFormat(date, highlight_format)
-            
             self.events_table.setItem(row, 0, QTableWidgetItem(str(event[0])))
             self.events_table.setItem(row, 1, QTableWidgetItem(event[2]))
             self.events_table.setItem(row, 2, QTableWidgetItem(event[3]))
@@ -1181,19 +1133,14 @@ class EventPlannerApp(QWidget):
             self.events_table.setItem(row, 5, QTableWidgetItem(event[6]))
 
     def display_event_details(self):
-        """Display details of the selected event"""
         if not self.events_table.currentItem() or not self.current_user_id:
             return
-            
         current_row = self.events_table.currentRow()
         event_id = int(self.events_table.item(current_row, 0).text())
         event = self.db.get_event_by_id(event_id)
-        
         if not event or event[1] != self.current_user_id:
             return
-            
         self.current_event_id = event_id
-        
         time_str = f"<b>Time:</b> {event[4]}<br>" if event[4] else ""
         archived_str = "<b>Status:</b> Archived<br>" if len(event) > 7 and event[7] else ""
         details = (
@@ -1209,57 +1156,44 @@ class EventPlannerApp(QWidget):
         self.load_tasks()
 
     def load_guests(self):
-        """Load guests for the currently selected event"""
         self.guests_table.setRowCount(0)
         if not self.current_event_id:
             return
-            
         guests = self.db.get_guests_for_event(self.current_event_id)
         self.guests_table.setRowCount(len(guests))
-        
         for row, guest in enumerate(guests):
             self.guests_table.setItem(row, 0, QTableWidgetItem(str(guest[0])))
             self.guests_table.setItem(row, 1, QTableWidgetItem(guest[2]))
             self.guests_table.setItem(row, 2, QTableWidgetItem(guest[3] or ""))
-        
         self.guests_label.setText(f"Guests ({len(guests)})")
 
     def load_tasks(self):
-        """Load tasks for the currently selected event"""
         self.tasks_table.setRowCount(0)
         if not self.current_event_id:
             return
-            
         tasks = self.db.get_tasks_for_event(self.current_event_id)
         self.tasks_table.setRowCount(len(tasks))
-        
         for row, task in enumerate(tasks):
             self.tasks_table.setItem(row, 0, QTableWidgetItem(str(task[0])))
             self.tasks_table.setItem(row, 1, QTableWidgetItem(task[2]))
-            
             item = QTableWidgetItem()
             item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
             item.setCheckState(Qt.Checked if task[3] else Qt.Unchecked)
             self.tasks_table.setItem(row, 2, item)
-        
         self.tasks_label.setText(f"Tasks ({len(tasks)})")
         self.check_archive_status()
 
     def check_archive_status(self):
-        """Check if event can be archived and enable archive button"""
         if not self.current_event_id:
             self.archive_btn.setEnabled(False)
             return
-            
         tasks = self.db.get_tasks_for_event(self.current_event_id)
         can_archive = not tasks or all(task[3] for task in tasks)
         self.archive_btn.setEnabled(can_archive and not self.view_toggle.isChecked())
 
     def add_guest(self):
-        """Add a new guest to the current event"""
         if not self.current_event_id:
             return
-            
         dialog = GuestDialog(self)
         if dialog.exec_() == QDialog.Accepted:
             data = dialog.get_data()
@@ -1271,20 +1205,16 @@ class EventPlannerApp(QWidget):
                 QMessageBox.critical(self, "Database Error", str(e))
 
     def edit_guest(self):
-        """Edit selected guest"""
         if not self.guests_table.currentItem() or not self.current_event_id:
             return
-            
         current_row = self.guests_table.currentRow()
         guest_id = int(self.guests_table.item(current_row, 0).text())
         guest_name = self.guests_table.item(current_row, 1).text()
         guest_email = self.guests_table.item(current_row, 2).text()
-        
         dialog = GuestDialog(self, {
             'name': guest_name,
             'email': guest_email
         })
-        
         if dialog.exec_() == QDialog.Accepted:
             data = dialog.get_data()
             try:
@@ -1296,20 +1226,16 @@ class EventPlannerApp(QWidget):
                 QMessageBox.critical(self, "Database Error", str(e))
 
     def delete_guest(self):
-        """Delete selected guest"""
         if not self.guests_table.currentItem():
             return
-            
         current_row = self.guests_table.currentRow()
         guest_id = int(self.guests_table.item(current_row, 0).text())
         guest_name = self.guests_table.item(current_row, 1).text()
-        
         reply = QMessageBox.question(
             self, 'Delete Guest', 
             f"Are you sure you want to delete guest '{guest_name}'?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
-        
         if reply == QMessageBox.Yes:
             try:
                 self.db.delete_guest(guest_id)
@@ -1319,10 +1245,8 @@ class EventPlannerApp(QWidget):
                 QMessageBox.critical(self, "Database Error", str(e))
 
     def add_task(self):
-        """Add a new task to the current event"""
         if not self.current_event_id:
             return
-            
         dialog = TaskDialog(self)
         if dialog.exec_() == QDialog.Accepted:
             data = dialog.get_data()
@@ -1339,20 +1263,16 @@ class EventPlannerApp(QWidget):
                 QMessageBox.critical(self, "Database Error", str(e))
 
     def edit_task(self):
-        """Edit selected task"""
         if not self.tasks_table.currentItem():
             return
-            
         current_row = self.tasks_table.currentRow()
         task_id = int(self.tasks_table.item(current_row, 0).text())
         task_desc = self.tasks_table.item(current_row, 1).text()
         task_completed = self.tasks_table.item(current_row, 2).checkState() == Qt.Checked
-        
         dialog = TaskDialog(self, {
             'description': task_desc,
             'completed': task_completed
         })
-        
         if dialog.exec_() == QDialog.Accepted:
             data = dialog.get_data()
             try:
@@ -1369,20 +1289,16 @@ class EventPlannerApp(QWidget):
                 QMessageBox.critical(self, "Database Error", str(e))
 
     def delete_task(self):
-        """Delete selected task"""
         if not self.tasks_table.currentItem():
             return
-            
         current_row = self.tasks_table.currentRow()
         task_id = int(self.tasks_table.item(current_row, 0).text())
         task_desc = self.tasks_table.item(current_row, 1).text()
-        
         reply = QMessageBox.question(
             self, 'Delete Task', 
             f"Are you sure you want to delete task '{task_desc}'?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
-        
         if reply == QMessageBox.Yes:
             try:
                 self.db.delete_task(task_id)
@@ -1392,14 +1308,11 @@ class EventPlannerApp(QWidget):
                 QMessageBox.critical(self, "Database Error", str(e))
 
     def export_to_csv(self):
-        """Export all data to CSV files"""
         if not self.current_user_id:
             return
-            
         filename, _ = QFileDialog.getSaveFileName(
             self, "Export to CSV", "", "CSV Files (*.csv)"
         )
-        
         if filename:
             if not filename.endswith('.csv'):
                 filename += '.csv'
@@ -1410,14 +1323,11 @@ class EventPlannerApp(QWidget):
                 QMessageBox.critical(self, "Export Error", str(e))
 
     def export_to_json(self):
-        """Export all data to JSON file"""
         if not self.current_user_id:
             return
-            
         filename, _ = QFileDialog.getSaveFileName(
             self, "Export to JSON", "", "JSON Files (*.json)"
         )
-        
         if filename:
             if not filename.endswith('.json'):
                 filename += '.json'
@@ -1430,11 +1340,9 @@ class EventPlannerApp(QWidget):
     def search_events(self, text):
         if not self.current_user_id:
             return
-            
         self.events_table.setRowCount(0)
         events = self.db.search_events(self.current_user_id, text) if text else self.db.get_all_events(self.current_user_id)
         self.events_table.setRowCount(len(events))
-        
         for row, event in enumerate(events):
             self.events_table.setItem(row, 0, QTableWidgetItem(str(event[0])))
             self.events_table.setItem(row, 1, QTableWidgetItem(event[2]))
@@ -1446,12 +1354,10 @@ class EventPlannerApp(QWidget):
     def calendar_date_selected(self):
         if not self.current_user_id:
             return
-            
         date_str = self.calendar.selectedDate().toString("yyyy-MM-dd")
         self.events_table.setRowCount(0)
         events = self.db.get_events_by_date(self.current_user_id, date_str)
         self.events_table.setRowCount(len(events))
-        
         for row, event in enumerate(events):
             self.events_table.setItem(row, 0, QTableWidgetItem(str(event[0])))
             self.events_table.setItem(row, 1, QTableWidgetItem(event[2]))
@@ -1478,7 +1384,6 @@ class EventPlannerApp(QWidget):
         self.archive_btn.setEnabled(False)
 
     def toggle_fullscreen(self):
-        """Toggle between full-screen and normal window mode"""
         if self.is_fullscreen:
             self.showNormal()
             self.fullscreen_btn.setText("Toggle Full Screen")
