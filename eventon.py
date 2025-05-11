@@ -2,6 +2,7 @@ import sqlite3
 import csv
 import json
 import hashlib
+import requests
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QLineEdit, QFormLayout, QDialog,
@@ -117,6 +118,47 @@ class EventDatabase:
                 if self._check_password(password, stored_hash):
                     return user_id
             return None
+
+    def update_user(self, user_id, password=None, email=None):
+        with self.conn:
+            cursor = self.conn.cursor()
+            if password:
+                password_hash = self._hash_password(password)
+                cursor.execute('''
+                    UPDATE users 
+                    SET password_hash = ?
+                    WHERE id = ?
+                ''', (password_hash, user_id))
+            if email is not None:
+                cursor.execute('''
+                    UPDATE users 
+                    SET email = ?
+                    WHERE id = ?
+                ''', (email, user_id))
+
+    def get_user_by_id(self, user_id):
+        with self.conn:
+            cursor = self.conn.cursor()
+            cursor.execute('''
+                SELECT id, username, password_hash, email 
+                FROM users WHERE id = ?
+            ''', (user_id,))
+            result = cursor.fetchone()
+            if result:
+                return {
+                    "id": result[0],
+                    "username": result[1],
+                    "password_hash": result[2],
+                    "email": result[3]
+                }
+            return None
+
+    def get_user_email(self, user_id):
+        with self.conn:
+            cursor = self.conn.cursor()
+            cursor.execute('SELECT email FROM users WHERE id = ?', (user_id,))
+            result = cursor.fetchone()
+            return result[0] if result else None
 
     def _hash_password(self, password):
         return hashlib.sha256(password.encode()).hexdigest()
@@ -341,6 +383,105 @@ class EventDatabase:
         with open(f'{filename}.json', 'w') as f:
             json.dump(data, f, indent=4)
 
+    def get_backup_data(self, user_id):
+        data = {
+            "user_id": user_id,
+            "user": self.get_user_by_id(user_id),
+            "events": [],
+            "archived_events": [],
+            "tasks": [],
+            "guests": [],
+            "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S")
+        }
+        with self.conn:
+            for row in self.conn.execute('SELECT * FROM events WHERE user_id = ?', (user_id,)):
+                data['events'].append({
+                    'id': row[0],
+                    'user_id': row[1],
+                    'name': row[2],
+                    'date': row[3],
+                    'time': row[4],
+                    'venue': row[5],
+                    'description': row[6],
+                    'is_archived': bool(row[7])
+                })
+            for row in self.conn.execute('SELECT * FROM archived_events WHERE user_id = ?', (user_id,)):
+                data['archived_events'].append({
+                    'id': row[0],
+                    'user_id': row[1],
+                    'name': row[2],
+                    'date': row[3],
+                    'time': row[4],
+                    'venue': row[5],
+                    'description': row[6],
+                    'archived_date': row[7]
+                })
+            for row in self.conn.execute('SELECT * FROM tasks WHERE event_id IN (SELECT id FROM events WHERE user_id = ?)', (user_id,)):
+                data['tasks'].append({
+                    'id': row[0],
+                    'event_id': row[1],
+                    'description': row[2],
+                    'is_completed': bool(row[3])
+                })
+            for row in self.conn.execute('SELECT * FROM guests WHERE event_id IN (SELECT id FROM events WHERE user_id = ?)', (user_id,)):
+                data['guests'].append({
+                    'id': row[0],
+                    'event_id': row[1],
+                    'name': row[2],
+                    'email': row[3]
+                })
+        return data
+
+    def restore_backup_data(self, backup_data):
+        user_id = backup_data['user_id']
+        with self.conn:
+            # Clear existing data for the user
+            self.conn.execute('DELETE FROM guests WHERE event_id IN (SELECT id FROM events WHERE user_id = ?)', (user_id,))
+            self.conn.execute('DELETE FROM tasks WHERE event_id IN (SELECT id FROM events WHERE user_id = ?)', (user_id,))
+            self.conn.execute('DELETE FROM events WHERE user_id = ?', (user_id,))
+            self.conn.execute('DELETE FROM archived_events WHERE user_id = ?', (user_id,))
+            # Restore user
+            user = backup_data['user']
+            self.conn.execute('''
+                INSERT OR REPLACE INTO users (id, username, password_hash, email)
+                VALUES (?, ?, ?, ?)
+            ''', (user['id'], user['username'], user['password_hash'], user['email']))
+            # Restore events
+            for event in backup_data['events']:
+                self.conn.execute('''
+                    INSERT INTO events (id, user_id, name, date, time, venue, description, is_archived)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    event['id'], event['user_id'], event['name'], event['date'],
+                    event['time'], event['venue'], event['description'], 1 if event['is_archived'] else 0
+                ))
+            # Restore archived events
+            for archived_event in backup_data['archived_events']:
+                self.conn.execute('''
+                    INSERT INTO archived_events (id, user_id, name, date, time, venue, description, archived_date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    archived_event['id'], archived_event['user_id'], archived_event['name'],
+                    archived_event['date'], archived_event['time'], archived_event['venue'],
+                    archived_event['description'], archived_event['archived_date']
+                ))
+            # Restore tasks
+            for task in backup_data['tasks']:
+                self.conn.execute('''
+                    INSERT INTO tasks (id, event_id, description, is_completed)
+                    VALUES (?, ?, ?, ?)
+                ''', (
+                    task['id'], task['event_id'], task['description'], 1 if task['is_completed'] else 0
+                ))
+            # Restore guests
+            for guest in backup_data['guests']:
+                self.conn.execute('''
+                    INSERT INTO guests (id, event_id, name, email)
+                    VALUES (?, ?, ?, ?)
+                ''', (
+                    guest['id'], guest['event_id'], guest['name'], guest['email']
+                ))
+
 class TaskDialog(QDialog):
     def __init__(self, parent=None, task_data=None):
         super().__init__(parent)
@@ -514,6 +655,117 @@ class SignupDialog(QDialog):
             "email": self.email_input.text() or None
         }
 
+class SettingsDialog(QDialog):
+    def __init__(self, parent=None, current_email=None):
+        super().__init__(parent)
+        self.setWindowTitle("Settings")
+        self.layout = QFormLayout(self)
+        self.password_input = QLineEdit(self)
+        self.password_input.setEchoMode(QLineEdit.Password)
+        self.confirm_password_input = QLineEdit(self)
+        self.confirm_password_input.setEchoMode(QLineEdit.Password)
+        self.email_input = QLineEdit(self)
+        self.api_url_input = QLineEdit(self)
+        self.api_url_input.setText("https://event-planner-application-backup-api.onrender.com")
+        if current_email:
+            self.email_input.setText(current_email)
+        self.layout.addRow("New Password (optional):", self.password_input)
+        self.layout.addRow("Confirm New Password:", self.confirm_password_input)
+        self.layout.addRow("Email (optional):", self.email_input)
+        self.layout.addRow("API URL:", self.api_url_input)
+        self.backup_btn = QPushButton("Backup Data")
+        self.backup_btn.clicked.connect(self.perform_backup)
+        self.layout.addWidget(self.backup_btn)
+        self.recover_btn = QPushButton("Recover Data")
+        self.recover_btn.clicked.connect(self.perform_recovery)
+        self.layout.addWidget(self.recover_btn)
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
+        self.buttons.accepted.connect(self.validate)
+        self.buttons.rejected.connect(self.reject)
+        self.layout.addWidget(self.buttons)
+
+    def validate(self):
+        password = self.password_input.text().strip()
+        confirm_password = self.confirm_password_input.text().strip()
+        if password or confirm_password:
+            if password != confirm_password:
+                QMessageBox.warning(self, "Error", "Passwords do not match")
+                return
+            if len(password) < 6:
+                QMessageBox.warning(self, "Error", "Password must be at least 6 characters")
+                return
+        self.accept()
+
+    def get_user_data(self):
+        return {
+            "password": self.password_input.text() or None,
+            "email": self.email_input.text() or None
+        }
+
+    def perform_backup(self):
+        api_url = self.api_url_input.text().strip()
+        if not api_url:
+            QMessageBox.warning(self, "Error", "API URL is required")
+            return
+        reply = QMessageBox.question(
+            self, 'Backup Data',
+            "Are you sure you want to backup your data to the specified API?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        parent = self.parent()
+        if not hasattr(parent, 'current_user_id') or not parent.current_user_id:
+            QMessageBox.warning(self, "Error", "No user is logged in")
+            return
+        try:
+            data = parent.db.get_backup_data(parent.current_user_id)
+            response = requests.post(f"{api_url}/backup", json=data, timeout=10)
+            response.raise_for_status()
+            result = response.json()
+            parent.status_bar.showMessage(f"Backup completed: {result['message']}", 5000)
+        except requests.exceptions.RequestException as e:
+            QMessageBox.critical(self, "Backup Error", f"Failed to connect to API: {str(e)}")
+        except ValueError as e:
+            QMessageBox.critical(self, "Backup Error", f"Invalid API response: {str(e)}")
+        except Exception as e:
+            QMessageBox.critical(self, "Backup Error", f"Backup failed: {str(e)}")
+
+    def perform_recovery(self):
+        api_url = self.api_url_input.text().strip()
+        if not api_url:
+            QMessageBox.warning(self, "Error", "API URL is required")
+            return
+        reply = QMessageBox.question(
+            self, 'Recover Data',
+            "This will overwrite your current data with the backup from the API. Are you sure you want to proceed?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        parent = self.parent()
+        if not hasattr(parent, 'current_user_id') or not parent.current_user_id:
+            QMessageBox.warning(self, "Error", "No user is logged in")
+            return
+        try:
+            response = requests.get(f"{api_url}/recover/{parent.current_user_id}", timeout=10)
+            response.raise_for_status()
+            backup_data = response.json()
+            parent.db.restore_backup_data(backup_data)
+            parent.load_events()
+            parent.status_bar.showMessage("Data recovered successfully", 5000)
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                QMessageBox.critical(self, "Recovery Error", "No backup found for this user")
+            else:
+                QMessageBox.critical(self, "Recovery Error", f"API error: {str(e)}")
+        except requests.exceptions.RequestException as e:
+            QMessageBox.critical(self, "Recovery Error", f"Failed to connect to API: {str(e)}")
+        except ValueError as e:
+            QMessageBox.critical(self, "Recovery Error", f"Invalid API response: {str(e)}")
+        except Exception as e:
+            QMessageBox.critical(self, "Recovery Error", f"Recovery failed: {str(e)}")
+
 class EventPlannerApp(QWidget):
     def __init__(self):
         super().__init__()
@@ -522,6 +774,9 @@ class EventPlannerApp(QWidget):
         self.current_username = None
         self.is_fullscreen = False
         self.is_dark_theme = True
+        self.event_id_map = {}  # Map row to event ID
+        self.task_id_map = {}   # Map row to task ID
+        self.guest_id_map = {}  # Map row to guest ID
         self.stacked_widget = QStackedWidget()
         self.login_widget = QWidget()
         self.setup_login_ui()
@@ -821,6 +1076,9 @@ class EventPlannerApp(QWidget):
         self.export_json_btn = QPushButton("Export to JSON")
         self.export_json_btn.setProperty("class", "accent")
         self.export_json_btn.clicked.connect(self.export_to_json)
+        self.settings_btn = QPushButton("Settings")
+        self.settings_btn.setProperty("class", "accent")
+        self.settings_btn.clicked.connect(self.show_settings_dialog)
         self.guest_buttons_layout = QHBoxLayout()
         self.add_guest_btn = QPushButton("Add Guest")
         self.add_guest_btn.clicked.connect(self.add_guest)
@@ -865,6 +1123,7 @@ class EventPlannerApp(QWidget):
         button_layout.addWidget(self.archive_btn)
         button_layout.addWidget(self.export_csv_btn)
         button_layout.addWidget(self.export_json_btn)
+        button_layout.addWidget(self.settings_btn)
         button_layout.addWidget(self.fullscreen_btn)
         button_layout.addWidget(self.theme_toggle_btn)
         button_layout.addWidget(self.logout_btn)
@@ -880,9 +1139,9 @@ class EventPlannerApp(QWidget):
         self.events_label = QLabel("Events")
         self.events_label.setFont(QFont("Arial", 12, QFont.Bold))
         self.events_table = QTableWidget()
-        self.events_table.setColumnCount(6)
-        self.events_table.setHorizontalHeaderLabels(["ID", "Name", "Date", "Time", "Venue", "Description"])
-        self.events_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.events_table.setColumnCount(5)
+        self.events_table.setHorizontalHeaderLabels(["Name", "Date", "Time", "Venue", "Description"])
+        self.events_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.events_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.events_table.itemSelectionChanged.connect(self.on_event_selection_changed)
         right_panel.addWidget(self.events_label)
@@ -896,9 +1155,9 @@ class EventPlannerApp(QWidget):
         self.guests_label = QLabel("Guests")
         self.guests_label.setFont(QFont("Arial", 12, QFont.Bold))
         self.guests_table = QTableWidget()
-        self.guests_table.setColumnCount(3)
-        self.guests_table.setHorizontalHeaderLabels(["ID", "Name", "Email"])
-        self.guests_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.guests_table.setColumnCount(2)
+        self.guests_table.setHorizontalHeaderLabels(["Name", "Email"])
+        self.guests_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.guests_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.guests_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.guests_table.itemSelectionChanged.connect(self.on_guest_selection_changed)
@@ -910,11 +1169,11 @@ class EventPlannerApp(QWidget):
         self.tasks_label = QLabel("Tasks")
         self.tasks_label.setFont(QFont("Arial", 12, QFont.Bold))
         self.tasks_table = QTableWidget()
-        self.tasks_table.setColumnCount(3)
-        self.tasks_table.setHorizontalHeaderLabels(["ID", "Description", "Completed"])
-        self.tasks_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.tasks_table.setColumnCount(2)
+        self.tasks_table.setHorizontalHeaderLabels(["Description", "Completed"])
+        self.tasks_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.tasks_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.tasks_table.setItemDelegateForColumn(2, CheckBoxDelegate(self))
+        self.tasks_table.setItemDelegateForColumn(1, CheckBoxDelegate(self))
         self.tasks_table.itemChanged.connect(self.on_task_status_changed)
         self.tasks_table.itemSelectionChanged.connect(self.on_task_selection_changed)
         tasks_scroll = QScrollArea()
@@ -956,8 +1215,11 @@ class EventPlannerApp(QWidget):
         self.toggle_task_buttons(bool(self.tasks_table.currentItem()))
 
     def on_task_status_changed(self, item):
-        if item.column() == 2:
-            task_id = int(self.tasks_table.item(item.row(), 0).text())
+        if item.column() == 1:
+            row = item.row()
+            task_id = self.task_id_map.get(row)
+            if task_id is None:
+                return
             is_completed = item.checkState() == Qt.Checked
             try:
                 self.db.update_task_status(task_id, is_completed)
@@ -993,6 +1255,23 @@ class EventPlannerApp(QWidget):
             else:
                 QMessageBox.warning(self, "Error", "Username already exists")
 
+    def show_settings_dialog(self):
+        if not self.current_user_id:
+            return
+        current_email = self.db.get_user_email(self.current_user_id)
+        dialog = SettingsDialog(self, current_email)
+        if dialog.exec_() == QDialog.Accepted:
+            user_data = dialog.get_user_data()
+            try:
+                self.db.update_user(
+                    self.current_user_id,
+                    password=user_data['password'],
+                    email=user_data['email']
+                )
+                self.status_bar.showMessage("Settings updated successfully", 3000)
+            except sqlite3.Error as e:
+                QMessageBox.critical(self, "Database Error", str(e))
+
     def logout(self):
         self.current_user_id = None
         self.current_username = None
@@ -1024,7 +1303,9 @@ class EventPlannerApp(QWidget):
         if not self.events_table.currentItem() or not self.current_user_id:
             return
         current_row = self.events_table.currentRow()
-        event_id = int(self.events_table.item(current_row, 0).text())
+        event_id = self.event_id_map.get(current_row)
+        if event_id is None:
+            return
         event = self.db.get_event_by_id(event_id)
         if not event or event[1] != self.current_user_id:
             QMessageBox.warning(self, "Error", "You can only edit your own events")
@@ -1052,8 +1333,10 @@ class EventPlannerApp(QWidget):
         if not self.events_table.currentItem() or not self.current_user_id:
             return
         current_row = self.events_table.currentRow()
-        event_id = int(self.events_table.item(current_row, 0).text())
-        event_name = self.events_table.item(current_row, 1).text()
+        event_id = self.event_id_map.get(current_row)
+        if event_id is None:
+            return
+        event_name = self.events_table.item(current_row, 0).text()
         event = self.db.get_event_by_id(event_id)
         if not event or event[1] != self.current_user_id:
             QMessageBox.warning(self, "Error", "You can only delete your own events")
@@ -1076,7 +1359,9 @@ class EventPlannerApp(QWidget):
         if not self.current_user_id or not self.events_table.currentItem():
             return
         current_row = self.events_table.currentRow()
-        event_id = int(self.events_table.item(current_row, 0).text())
+        event_id = self.event_id_map.get(current_row)
+        if event_id is None:
+            return
         event = self.db.get_event_by_id(event_id)
         if not event or event[1] != self.current_user_id:
             QMessageBox.warning(self, "Error", "You can only archive your own events")
@@ -1111,6 +1396,7 @@ class EventPlannerApp(QWidget):
         if not self.current_user_id:
             return
         self.events_table.setRowCount(0)
+        self.event_id_map.clear()
         self.calendar.setDateTextFormat(QDate(), QTextCharFormat())
         if show_archived:
             events = self.db.get_archived_events(self.current_user_id)
@@ -1125,18 +1411,20 @@ class EventPlannerApp(QWidget):
             date = QDate.fromString(event[3], "yyyy-MM-dd")
             if not show_archived:
                 self.calendar.setDateTextFormat(date, highlight_format)
-            self.events_table.setItem(row, 0, QTableWidgetItem(str(event[0])))
-            self.events_table.setItem(row, 1, QTableWidgetItem(event[2]))
-            self.events_table.setItem(row, 2, QTableWidgetItem(event[3]))
-            self.events_table.setItem(row, 3, QTableWidgetItem(event[4] if event[4] else ""))
-            self.events_table.setItem(row, 4, QTableWidgetItem(event[5]))
-            self.events_table.setItem(row, 5, QTableWidgetItem(event[6]))
+            self.event_id_map[row] = event[0]
+            self.events_table.setItem(row, 0, QTableWidgetItem(event[2]))
+            self.events_table.setItem(row, 1, QTableWidgetItem(event[3]))
+            self.events_table.setItem(row, 2, QTableWidgetItem(event[4] if event[4] else ""))
+            self.events_table.setItem(row, 3, QTableWidgetItem(event[5]))
+            self.events_table.setItem(row, 4, QTableWidgetItem(event[6]))
 
     def display_event_details(self):
         if not self.events_table.currentItem() or not self.current_user_id:
             return
         current_row = self.events_table.currentRow()
-        event_id = int(self.events_table.item(current_row, 0).text())
+        event_id = self.event_id_map.get(current_row)
+        if event_id is None:
+            return
         event = self.db.get_event_by_id(event_id)
         if not event or event[1] != self.current_user_id:
             return
@@ -1157,29 +1445,31 @@ class EventPlannerApp(QWidget):
 
     def load_guests(self):
         self.guests_table.setRowCount(0)
+        self.guest_id_map.clear()
         if not self.current_event_id:
             return
         guests = self.db.get_guests_for_event(self.current_event_id)
         self.guests_table.setRowCount(len(guests))
         for row, guest in enumerate(guests):
-            self.guests_table.setItem(row, 0, QTableWidgetItem(str(guest[0])))
-            self.guests_table.setItem(row, 1, QTableWidgetItem(guest[2]))
-            self.guests_table.setItem(row, 2, QTableWidgetItem(guest[3] or ""))
+            self.guest_id_map[row] = guest[0]
+            self.guests_table.setItem(row, 0, QTableWidgetItem(guest[2]))
+            self.guests_table.setItem(row, 1, QTableWidgetItem(guest[3] or ""))
         self.guests_label.setText(f"Guests ({len(guests)})")
 
     def load_tasks(self):
         self.tasks_table.setRowCount(0)
+        self.task_id_map.clear()
         if not self.current_event_id:
             return
         tasks = self.db.get_tasks_for_event(self.current_event_id)
         self.tasks_table.setRowCount(len(tasks))
         for row, task in enumerate(tasks):
-            self.tasks_table.setItem(row, 0, QTableWidgetItem(str(task[0])))
-            self.tasks_table.setItem(row, 1, QTableWidgetItem(task[2]))
+            self.task_id_map[row] = task[0]
+            self.tasks_table.setItem(row, 0, QTableWidgetItem(task[2]))
             item = QTableWidgetItem()
             item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
             item.setCheckState(Qt.Checked if task[3] else Qt.Unchecked)
-            self.tasks_table.setItem(row, 2, item)
+            self.tasks_table.setItem(row, 1, item)
         self.tasks_label.setText(f"Tasks ({len(tasks)})")
         self.check_archive_status()
 
@@ -1208,9 +1498,11 @@ class EventPlannerApp(QWidget):
         if not self.guests_table.currentItem() or not self.current_event_id:
             return
         current_row = self.guests_table.currentRow()
-        guest_id = int(self.guests_table.item(current_row, 0).text())
-        guest_name = self.guests_table.item(current_row, 1).text()
-        guest_email = self.guests_table.item(current_row, 2).text()
+        guest_id = self.guest_id_map.get(current_row)
+        if guest_id is None:
+            return
+        guest_name = self.guests_table.item(current_row, 0).text()
+        guest_email = self.guests_table.item(current_row, 1).text()
         dialog = GuestDialog(self, {
             'name': guest_name,
             'email': guest_email
@@ -1229,8 +1521,10 @@ class EventPlannerApp(QWidget):
         if not self.guests_table.currentItem():
             return
         current_row = self.guests_table.currentRow()
-        guest_id = int(self.guests_table.item(current_row, 0).text())
-        guest_name = self.guests_table.item(current_row, 1).text()
+        guest_id = self.guest_id_map.get(current_row)
+        if guest_id is None:
+            return
+        guest_name = self.guests_table.item(current_row, 0).text()
         reply = QMessageBox.question(
             self, 'Delete Guest', 
             f"Are you sure you want to delete guest '{guest_name}'?",
@@ -1266,9 +1560,11 @@ class EventPlannerApp(QWidget):
         if not self.tasks_table.currentItem():
             return
         current_row = self.tasks_table.currentRow()
-        task_id = int(self.tasks_table.item(current_row, 0).text())
-        task_desc = self.tasks_table.item(current_row, 1).text()
-        task_completed = self.tasks_table.item(current_row, 2).checkState() == Qt.Checked
+        task_id = self.task_id_map.get(current_row)
+        if task_id is None:
+            return
+        task_desc = self.tasks_table.item(current_row, 0).text()
+        task_completed = self.tasks_table.item(current_row, 1).checkState() == Qt.Checked
         dialog = TaskDialog(self, {
             'description': task_desc,
             'completed': task_completed
@@ -1292,8 +1588,10 @@ class EventPlannerApp(QWidget):
         if not self.tasks_table.currentItem():
             return
         current_row = self.tasks_table.currentRow()
-        task_id = int(self.tasks_table.item(current_row, 0).text())
-        task_desc = self.tasks_table.item(current_row, 1).text()
+        task_id = self.task_id_map.get(current_row)
+        if task_id is None:
+            return
+        task_desc = self.tasks_table.item(current_row, 0).text()
         reply = QMessageBox.question(
             self, 'Delete Task', 
             f"Are you sure you want to delete task '{task_desc}'?",
@@ -1341,30 +1639,32 @@ class EventPlannerApp(QWidget):
         if not self.current_user_id:
             return
         self.events_table.setRowCount(0)
+        self.event_id_map.clear()
         events = self.db.search_events(self.current_user_id, text) if text else self.db.get_all_events(self.current_user_id)
         self.events_table.setRowCount(len(events))
         for row, event in enumerate(events):
-            self.events_table.setItem(row, 0, QTableWidgetItem(str(event[0])))
-            self.events_table.setItem(row, 1, QTableWidgetItem(event[2]))
-            self.events_table.setItem(row, 2, QTableWidgetItem(event[3]))
-            self.events_table.setItem(row, 3, QTableWidgetItem(event[4] if event[4] else ""))
-            self.events_table.setItem(row, 4, QTableWidgetItem(event[5]))
-            self.events_table.setItem(row, 5, QTableWidgetItem(event[6]))
+            self.event_id_map[row] = event[0]
+            self.events_table.setItem(row, 0, QTableWidgetItem(event[2]))
+            self.events_table.setItem(row, 1, QTableWidgetItem(event[3]))
+            self.events_table.setItem(row, 2, QTableWidgetItem(event[4] if event[4] else ""))
+            self.events_table.setItem(row, 3, QTableWidgetItem(event[5]))
+            self.events_table.setItem(row, 4, QTableWidgetItem(event[6]))
 
     def calendar_date_selected(self):
         if not self.current_user_id:
             return
         date_str = self.calendar.selectedDate().toString("yyyy-MM-dd")
         self.events_table.setRowCount(0)
+        self.event_id_map.clear()
         events = self.db.get_events_by_date(self.current_user_id, date_str)
         self.events_table.setRowCount(len(events))
         for row, event in enumerate(events):
-            self.events_table.setItem(row, 0, QTableWidgetItem(str(event[0])))
-            self.events_table.setItem(row, 1, QTableWidgetItem(event[2]))
-            self.events_table.setItem(row, 2, QTableWidgetItem(event[3]))
-            self.events_table.setItem(row, 3, QTableWidgetItem(event[4] if event[4] else ""))
-            self.events_table.setItem(row, 4, QTableWidgetItem(event[5]))
-            self.events_table.setItem(row, 5, QTableWidgetItem(event[6]))
+            self.event_id_map[row] = event[0]
+            self.events_table.setItem(row, 0, QTableWidgetItem(event[2]))
+            self.events_table.setItem(row, 1, QTableWidgetItem(event[3]))
+            self.events_table.setItem(row, 2, QTableWidgetItem(event[4] if event[4] else ""))
+            self.events_table.setItem(row, 3, QTableWidgetItem(event[5]))
+            self.events_table.setItem(row, 4, QTableWidgetItem(event[6]))
 
     def go_to_today(self):
         self.calendar.setSelectedDate(QDate.currentDate())
@@ -1378,6 +1678,9 @@ class EventPlannerApp(QWidget):
         self.tasks_table.setRowCount(0)
         self.tasks_label.setText("Tasks")
         self.current_event_id = None
+        self.event_id_map.clear()
+        self.task_id_map.clear()
+        self.guest_id_map.clear()
         self.toggle_event_buttons(False)
         self.toggle_guest_buttons(False)
         self.toggle_task_buttons(False)
