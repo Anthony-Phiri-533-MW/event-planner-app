@@ -1,5 +1,5 @@
-# Event Planner Technical Documentation
-
+# Event Planner Technical Documentation  
+##Access the user mabual here [USER-MANUAL](User-Manual(with source code).md)
 ## Overview
 
 The **Event Planner** is a desktop application for managing events, tasks, and guest lists. Built with Python 3.8+ and PyQt5, it uses a SQLite database for persistent storage and supports user authentication, event management, and data export. The application is modularized in the `event_planner` package, with a clear separation of concerns across UI, database, and logic.
